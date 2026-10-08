@@ -7,6 +7,7 @@
 // plane imports
 import type { TWorkspaceSettingsItem, TWorkspaceSettingsTabs } from "@plane/types";
 import { EUserWorkspaceRoles } from "@plane/types";
+import { SHOW_UPGRADE_PROMPTS } from "../payment";
 
 export enum WORKSPACE_SETTINGS_CATEGORY {
   ADMINISTRATION = "administration",
@@ -72,7 +73,7 @@ export const GROUPED_WORKSPACE_SETTINGS: Record<WORKSPACE_SETTINGS_CATEGORY, TWo
   [WORKSPACE_SETTINGS_CATEGORY.ADMINISTRATION]: [
     WORKSPACE_SETTINGS["general"],
     WORKSPACE_SETTINGS["members"],
-    WORKSPACE_SETTINGS["billing-and-plans"],
+    ...(SHOW_UPGRADE_PROMPTS ? [WORKSPACE_SETTINGS["billing-and-plans"]] : []),
     WORKSPACE_SETTINGS["export"],
   ],
   [WORKSPACE_SETTINGS_CATEGORY.FEATURES]: [],

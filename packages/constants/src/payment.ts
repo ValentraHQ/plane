@@ -8,6 +8,12 @@ import type { IPaymentProduct, TBillingFrequency, TProductBillingFrequency } fro
 import { EProductSubscriptionEnum } from "@plane/types";
 
 /**
+ * Whether paid-plan upsells (Pro badges, upgrade modal, billing & plans page) are shown.
+ * Off unless the build sets VITE_SHOW_UPGRADE_PROMPTS=1.
+ */
+export const SHOW_UPGRADE_PROMPTS = process.env.VITE_SHOW_UPGRADE_PROMPTS === "1";
+
+/**
  * Default billing frequency for each product subscription type
  */
 export const DEFAULT_PRODUCT_BILLING_FREQUENCY: TProductBillingFrequency = {

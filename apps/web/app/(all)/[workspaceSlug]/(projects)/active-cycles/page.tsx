@@ -5,12 +5,21 @@
  */
 
 import { observer } from "mobx-react";
+import { redirect } from "react-router";
+import { SHOW_UPGRADE_PROMPTS } from "@plane/constants";
 // components
 import { PageHead } from "@/components/core/page-title";
 // hooks
 import { useWorkspace } from "@/hooks/store/use-workspace";
 // local imports
 import { WorkspaceActiveCyclesUpgrade } from "@/components/active-cycles/workspace-active-cycles-upgrade";
+import type { Route } from "./+types/page";
+
+export function clientLoader({ params }: Route.ClientLoaderArgs) {
+  // This page is only an upgrade advert in the Community Edition
+  if (!SHOW_UPGRADE_PROMPTS) throw redirect(`/${params.workspaceSlug}/`);
+  return null;
+}
 
 function WorkspaceActiveCyclesPage() {
   const { currentWorkspace } = useWorkspace();
