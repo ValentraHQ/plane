@@ -4,6 +4,7 @@
 
 # Python imports
 import json
+import uuid
 from datetime import datetime
 from django.core.serializers.json import DjangoJSONEncoder
 
@@ -19,6 +20,7 @@ from django.db.models import (
     Case,
     When,
     IntegerField,
+    Subquery,
 )
 from django.http import StreamingHttpResponse
 from django.contrib.postgres.aggregates import ArrayAgg
@@ -62,7 +64,7 @@ def unarchive_archive_page_and_descendants(page_id, archived_at):
     sql = """
     WITH RECURSIVE descendants AS (
         SELECT id FROM pages WHERE id = %s
-        UNION ALL
+        UNION
         SELECT pages.id FROM pages, descendants WHERE pages.parent_id = descendants.id
     )
     UPDATE pages SET archived_at = %s WHERE id IN (SELECT id FROM descendants);
@@ -71,6 +73,47 @@ def unarchive_archive_page_and_descendants(page_id, archived_at):
     # Execute the SQL query
     with connection.cursor() as cursor:
         cursor.execute(sql, [page_id, archived_at])
+
+
+def get_page_descendant_ids(page_id):
+    """Return the ids of every page nested (at any depth) under page_id."""
+    # UNION (not UNION ALL) so the walk terminates even if a cycle already exists
+    sql = """
+    WITH RECURSIVE descendants AS (
+        SELECT id FROM pages WHERE parent_id = %s
+        UNION
+        SELECT pages.id FROM pages, descendants WHERE pages.parent_id = descendants.id
+    )
+    SELECT id FROM descendants;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [page_id])
+        return {str(row[0]) for row in cursor.fetchall()}
+
+
+def validate_page_parent(parent_id, slug, project_id, page_id=None):
+    """Return an error message if parent_id cannot be the parent of page_id, else None."""
+    if not parent_id:
+        return None
+    try:
+        parent_id = str(uuid.UUID(str(parent_id)))
+    except ValueError:
+        return "Invalid parent page"
+    if page_id and parent_id == str(page_id):
+        return "A page cannot be its own parent"
+    parent = Page.objects.filter(
+        pk=parent_id,
+        workspace__slug=slug,
+        projects__id=project_id,
+        project_pages__deleted_at__isnull=True,
+    ).first()
+    if parent is None:
+        return "Parent page not found in this project"
+    if parent.archived_at:
+        return "A page cannot be nested under an archived page"
+    if page_id and parent_id in get_page_descendant_ids(page_id):
+        return "A page cannot be moved under one of its own sub-pages"
+    return None
 
 
 class PageViewSet(BaseViewSet):
@@ -86,6 +129,15 @@ class PageViewSet(BaseViewSet):
             entity_identifier=OuterRef("pk"),
             workspace__slug=self.kwargs.get("slug"),
         )
+        # Visible, non-archived direct children; lets the UI know a page can be expanded
+        sub_pages_count = (
+            Page.objects.filter(parent_id=OuterRef("pk"), archived_at__isnull=True)
+            .filter(Q(owned_by=self.request.user) | Q(access=0))
+            .order_by()
+            .values("parent_id")
+            .annotate(count=Count("id"))
+            .values("count")
+        )
         return self.filter_queryset(
             super()
             .get_queryset()
@@ -95,12 +147,12 @@ class PageViewSet(BaseViewSet):
                 projects__project_projectmember__is_active=True,
                 projects__archived_at__isnull=True,
             )
-            .filter(parent__isnull=True)
             .filter(Q(owned_by=self.request.user) | Q(access=0))
             .prefetch_related("projects")
             .select_related("workspace")
             .select_related("owned_by")
             .annotate(is_favorite=Exists(subquery))
+            .annotate(sub_pages_count=Coalesce(Subquery(sub_pages_count, output_field=IntegerField()), 0))
             .prefetch_related("labels")
             # Sanitize the user-supplied order_by against an allowlist: Django
             # resolves the field at call time, so an unknown field raises
@@ -142,6 +194,10 @@ class PageViewSet(BaseViewSet):
         )
 
     def create(self, request, slug, project_id):
+        parent_error = validate_page_parent(request.data.get("parent"), slug, project_id)
+        if parent_error:
+            return Response({"error": parent_error}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = PageSerializer(
             data=request.data,
             context={
@@ -178,14 +234,9 @@ class PageViewSet(BaseViewSet):
             if page.is_locked:
                 return Response({"error": "Page is locked"}, status=status.HTTP_400_BAD_REQUEST)
 
-            parent = request.data.get("parent", None)
-            if parent:
-                _ = Page.objects.get(
-                    pk=parent,
-                    workspace__slug=slug,
-                    projects__id=project_id,
-                    project_pages__deleted_at__isnull=True,
-                )
+            parent_error = validate_page_parent(request.data.get("parent"), slug, project_id, page_id=page_id)
+            if parent_error:
+                return Response({"error": parent_error}, status=status.HTTP_400_BAD_REQUEST)
 
             # Only update access if the page owner is the requesting  user
             if page.access != request.data.get("access", page.access) and page.owned_by_id != request.user.id:
@@ -216,6 +267,8 @@ class PageViewSet(BaseViewSet):
 
     def retrieve(self, request, slug, project_id, page_id=None):
         page = self.get_queryset().filter(pk=page_id).first()
+        if page is None:
+            return Response({"error": "Page not found"}, status=status.HTTP_404_NOT_FOUND)
         project = Project.objects.get(pk=project_id)
         track_visit = request.query_params.get("track_visit", "true").lower() == "true"
 
@@ -305,6 +358,15 @@ class PageViewSet(BaseViewSet):
 
     def list(self, request, slug, project_id):
         queryset = self.get_queryset()
+        # Top-level pages by default; ?parent_id=<uuid> lists that page's direct children
+        parent_id = request.query_params.get("parent_id")
+        if parent_id:
+            try:
+                queryset = queryset.filter(parent_id=uuid.UUID(parent_id))
+            except ValueError:
+                return Response({"error": "Invalid parent_id"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            queryset = queryset.filter(parent__isnull=True)
         project = Project.objects.get(pk=project_id)
         if (
             ProjectMember.objects.filter(
