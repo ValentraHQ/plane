@@ -5,7 +5,6 @@
  */
 
 import { observer } from "mobx-react";
-import { useParams } from "next/navigation";
 import { AddOutline, GlobeOutline, InfoOutline, LockOutline, MinusOutline } from "@makeplane/propel/icons";
 // plane imports
 import { Avatar } from "@makeplane/propel/components/avatar";
@@ -35,10 +34,9 @@ export const BlockItemAction = observer(function BlockItemAction(props: Props) {
   const { page, parentRef, storeType } = props;
   // router
   const router = useAppRouter();
-  const { workspaceSlug, projectId } = useParams();
   // store hooks
   const { getUserDetails } = useMember();
-  const { canCurrentUserCreatePage, createPage } = usePageStore(storeType);
+  const { canCurrentUserCreatePage, createPage, getPageById } = usePageStore(storeType);
   // page operations
   const { pageOperations } = usePageOperations({
     page,
@@ -51,7 +49,9 @@ export const BlockItemAction = observer(function BlockItemAction(props: Props) {
   const handleAddSubPage = async () => {
     try {
       const subPage = await createPage({ parent: page.id, access });
-      if (subPage?.id) router.push(`/${workspaceSlug}/projects/${projectId}/pages/${subPage.id}`);
+      // the page knows its own URL (project page or wiki page)
+      const link = subPage?.id ? getPageById(subPage.id)?.getRedirectionLink() : undefined;
+      if (link) router.push(link);
     } catch (err) {
       setToast({
         type: "error",
