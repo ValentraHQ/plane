@@ -92,7 +92,10 @@ def get_page_descendant_ids(page_id):
 
 
 def validate_page_parent(parent_id, slug, project_id, page_id=None):
-    """Return an error message if parent_id cannot be the parent of page_id, else None."""
+    """Return an error message if parent_id cannot be the parent of page_id, else None.
+
+    project_id=None validates within the workspace wiki (is_global pages) instead of a project.
+    """
     if not parent_id:
         return None
     try:
@@ -101,14 +104,17 @@ def validate_page_parent(parent_id, slug, project_id, page_id=None):
         return "Invalid parent page"
     if page_id and parent_id == str(page_id):
         return "A page cannot be its own parent"
-    parent = Page.objects.filter(
-        pk=parent_id,
-        workspace__slug=slug,
-        projects__id=project_id,
-        project_pages__deleted_at__isnull=True,
-    ).first()
+    if project_id is None:
+        parent = Page.objects.filter(pk=parent_id, workspace__slug=slug, is_global=True).first()
+    else:
+        parent = Page.objects.filter(
+            pk=parent_id,
+            workspace__slug=slug,
+            projects__id=project_id,
+            project_pages__deleted_at__isnull=True,
+        ).first()
     if parent is None:
-        return "Parent page not found in this project"
+        return "Parent page not found in this project" if project_id else "Parent page not found in this wiki"
     if parent.archived_at:
         return "A page cannot be nested under an archived page"
     if page_id and parent_id in get_page_descendant_ids(page_id):

@@ -135,6 +135,26 @@ class PageDetailSerializer(PageSerializer):
         fields = PageSerializer.Meta.fields + ["description_html"]
 
 
+class WorkspacePageSerializer(PageSerializer):
+    """Workspace wiki page: is_global, never linked to a project and without (project-scoped) labels."""
+
+    def create(self, validated_data):
+        validated_data.pop("labels", None)
+        return Page.objects.create(
+            **validated_data,
+            is_global=True,
+            description_json=self.context["description_json"],
+            description_binary=self.context["description_binary"],
+            description_html=self.context["description_html"],
+            owned_by_id=self.context["owned_by_id"],
+            workspace_id=self.context["workspace_id"],
+        )
+
+    def update(self, instance, validated_data):
+        validated_data.pop("labels", None)
+        return super().update(instance, validated_data)
+
+
 class PageVersionSerializer(BaseSerializer):
     class Meta:
         model = PageVersion

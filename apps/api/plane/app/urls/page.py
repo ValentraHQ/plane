@@ -11,6 +11,9 @@ from plane.app.views import (
     PagesDescriptionViewSet,
     PageVersionEndpoint,
     PageDuplicateEndpoint,
+    WorkspacePageViewSet,
+    WorkspacePagesDescriptionViewSet,
+    WorkspacePageVersionEndpoint,
 )
 
 urlpatterns = [
@@ -72,5 +75,46 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/pages/<uuid:page_id>/duplicate/",
         PageDuplicateEndpoint.as_view(),
         name="page-duplicate",
+    ),
+    # workspace wiki (pages outside projects)
+    path(
+        "workspaces/<str:slug>/wiki/pages/",
+        WorkspacePageViewSet.as_view({"get": "list", "post": "create"}),
+        name="workspace-wiki-pages",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/",
+        WorkspacePageViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"}),
+        name="workspace-wiki-pages",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/archive/",
+        WorkspacePageViewSet.as_view({"post": "archive", "delete": "unarchive"}),
+        name="workspace-wiki-page-archive-unarchive",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/lock/",
+        WorkspacePageViewSet.as_view({"post": "lock", "delete": "unlock"}),
+        name="workspace-wiki-page-lock-unlock",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/access/",
+        WorkspacePageViewSet.as_view({"post": "access"}),
+        name="workspace-wiki-page-access",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/description/",
+        WorkspacePagesDescriptionViewSet.as_view({"get": "retrieve", "patch": "partial_update"}),
+        name="workspace-wiki-page-description",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/versions/",
+        WorkspacePageVersionEndpoint.as_view(),
+        name="workspace-wiki-page-versions",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/versions/<uuid:pk>/",
+        WorkspacePageVersionEndpoint.as_view(),
+        name="workspace-wiki-page-versions",
     ),
 ]
