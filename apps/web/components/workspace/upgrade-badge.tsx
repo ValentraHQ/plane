@@ -5,6 +5,7 @@
  */
 
 // helpers
+import { SHOW_UPGRADE_PROMPTS } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { cn } from "@plane/utils";
 
@@ -17,6 +18,8 @@ export function UpgradeBadge(props: TUpgradeBadge) {
   const { className, size = "sm" } = props;
 
   const { t } = useTranslation();
+
+  if (!SHOW_UPGRADE_PROMPTS) return null;
 
   return (
     <div

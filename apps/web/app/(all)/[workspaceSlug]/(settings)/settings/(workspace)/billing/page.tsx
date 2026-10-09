@@ -5,8 +5,9 @@
  */
 
 import { observer } from "mobx-react";
+import { redirect } from "react-router";
 // component
-import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
+import { EUserPermissions, EUserPermissionsLevel, SHOW_UPGRADE_PROMPTS } from "@plane/constants";
 import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
 import { PageHead } from "@/components/core/page-title";
 import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
@@ -16,6 +17,13 @@ import { useUserPermissions } from "@/hooks/store/user";
 // local imports
 import { BillingWorkspaceSettingsHeader } from "./header";
 import { BillingRoot } from "@/components/workspace/billing";
+import type { Route } from "./+types/page";
+
+export function clientLoader({ params }: Route.ClientLoaderArgs) {
+  // Billing & plans is an upsell-only page; send users back to settings when upsells are off
+  if (!SHOW_UPGRADE_PROMPTS) throw redirect(`/${params.workspaceSlug}/settings/`);
+  return null;
+}
 
 function BillingSettingsPage() {
   // store hooks

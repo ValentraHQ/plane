@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { observer } from "mobx-react";
 // ui
+import { SHOW_UPGRADE_PROMPTS } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { Tooltip } from "@makeplane/propel/components/tooltip";
 // hooks
@@ -23,6 +24,15 @@ export const WorkspaceEditionBadge = observer(function WorkspaceEditionBadge() {
   const { t } = useTranslation();
   // platform
   const { isMobile } = usePlatformOS();
+
+  // Without upsells the badge only shows the edition and version
+  if (!SHOW_UPGRADE_PROMPTS) {
+    return (
+      <Tooltip label={`Version: v${packageJson.version}`} disabled={isMobile}>
+        <span className="px-2 text-13 font-medium text-tertiary">Community</span>
+      </Tooltip>
+    );
+  }
 
   return (
     <>
