@@ -193,7 +193,12 @@ export const WikiTreeNode = observer(function WikiTreeNode(props: Props) {
         >
           <ChevronRightOutline className={cn("size-3 transition-transform", { "rotate-90": isExpanded })} />
         </button>
-        <Link href={page.getRedirectionLink()} className="flex min-w-0 flex-1 items-center gap-1.5 py-1">
+        {/* not natively draggable, so dragging the title moves the page instead of dragging the URL */}
+        <Link
+          href={page.getRedirectionLink()}
+          draggable={false}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1"
+        >
           {page.logo_props?.in_use ? (
             <Logo logo={page.logo_props} size={14} type="lucide" />
           ) : (
