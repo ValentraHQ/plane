@@ -96,6 +96,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
   is_locked: boolean;
   archived_at: string | null | undefined;
   workspace: string | undefined;
+  parent: string | null | undefined;
+  sub_pages_count: number | undefined;
   project_ids?: string[] | undefined;
   created_by: string | undefined;
   updated_by: string | undefined;
@@ -133,6 +135,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
     this.is_locked = page?.is_locked || false;
     this.archived_at = page?.archived_at || undefined;
     this.workspace = page?.workspace || undefined;
+    this.parent = page?.parent || null;
+    this.sub_pages_count = page?.sub_pages_count;
     this.project_ids = page?.project_ids || undefined;
     this.created_by = page?.created_by || undefined;
     this.updated_by = page?.updated_by || undefined;
@@ -158,6 +162,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       is_locked: observable.ref,
       archived_at: observable.ref,
       workspace: observable.ref,
+      parent: observable.ref,
+      sub_pages_count: observable.ref,
       project_ids: observable,
       created_by: observable.ref,
       updated_by: observable.ref,
@@ -234,6 +240,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       is_locked: this.is_locked,
       archived_at: this.archived_at,
       workspace: this.workspace,
+      parent: this.parent,
+      sub_pages_count: this.sub_pages_count,
       project_ids: this.project_ids,
       created_by: this.created_by,
       updated_by: this.updated_by,

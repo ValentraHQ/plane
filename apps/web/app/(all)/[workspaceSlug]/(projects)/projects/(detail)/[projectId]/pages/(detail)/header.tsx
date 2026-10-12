@@ -4,6 +4,7 @@
  * See the LICENSE file for details.
  */
 
+import { useEffect } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
@@ -31,6 +32,8 @@ export interface IPagesHeaderProps {
 }
 
 const storeType = EPageStoreType.PROJECT;
+// guards the ancestor walk against unexpectedly deep or cyclic data
+const MAX_PAGE_ANCESTORS = 20;
 
 export const PageDetailsHeader = observer(function PageDetailsHeader() {
   // plane hooks
@@ -41,13 +44,34 @@ export const PageDetailsHeader = observer(function PageDetailsHeader() {
   const projectCrumb = useProjectCrumbProps(workspaceSlug?.toString(), projectId?.toString());
   // store hooks
   const { loader } = useProject();
-  const { getPageById, getCurrentProjectPageIds } = usePageStore(storeType);
+  const { getPageById, getCurrentProjectPageIds, fetchPageDetails } = usePageStore(storeType);
   const page = usePage({
     pageId: pageId?.toString() ?? "",
     storeType,
   });
   // derived values
   const projectPageIds = getCurrentProjectPageIds(projectId?.toString());
+  // ancestors of a sub-page, nearest last; stops at the first ancestor not loaded yet
+  const ancestors: NonNullable<ReturnType<typeof getPageById>>[] = [];
+  let missingAncestorId: string | undefined;
+  for (let parentId = page?.parent; parentId && ancestors.length < MAX_PAGE_ANCESTORS; ) {
+    const ancestor = getPageById(parentId);
+    if (!ancestor) {
+      missingAncestorId = parentId;
+      break;
+    }
+    if (ancestors.includes(ancestor)) break;
+    ancestors.unshift(ancestor);
+    parentId = ancestor.parent;
+  }
+
+  // load ancestors one level at a time when a sub-page is opened directly
+  useEffect(() => {
+    if (!missingAncestorId || !workspaceSlug || !projectId) return;
+    fetchPageDetails(workspaceSlug.toString(), projectId.toString(), missingAncestorId, { trackVisit: false }).catch(
+      () => undefined
+    );
+  }, [missingAncestorId, workspaceSlug, projectId, fetchPageDetails]);
 
   const switcherOptions = projectPageIds
     .map<BreadcrumbNavigationItem | undefined>((id) => {
@@ -87,6 +111,18 @@ export const PageDetailsHeader = observer(function PageDetailsHeader() {
                 />
               }
             />
+            {ancestors.map((ancestor) => (
+              <Breadcrumbs.Item
+                key={ancestor.id}
+                component={
+                  <BreadcrumbLink
+                    label={getPageName(ancestor.name)}
+                    href={`/${workspaceSlug}/projects/${projectId}/pages/${ancestor.id}`}
+                    icon={<SwitcherIcon logo_props={ancestor.logo_props} LabelIcon={PagesOutline} size={16} />}
+                  />
+                }
+              />
+            ))}
 
             <Breadcrumbs.Item
               component={

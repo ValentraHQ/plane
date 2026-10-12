@@ -53,7 +53,8 @@ export type TPageActions =
   | "delete"
   | "version-history"
   | "export"
-  | "move";
+  | "move"
+  | "add-sub-page";
 
 type Props = {
   extraOptions?: (TContextMenuItem & { key: TPageActions })[];

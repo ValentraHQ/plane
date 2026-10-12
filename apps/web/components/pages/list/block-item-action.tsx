@@ -5,17 +5,21 @@
  */
 
 import { observer } from "mobx-react";
-import { GlobeOutline, InfoOutline, LockOutline, MinusOutline } from "@makeplane/propel/icons";
+import { useParams } from "next/navigation";
+import { AddOutline, GlobeOutline, InfoOutline, LockOutline, MinusOutline } from "@makeplane/propel/icons";
 // plane imports
 import { Avatar } from "@makeplane/propel/components/avatar";
 import { Tooltip } from "@makeplane/propel/components/tooltip";
 import { FavoriteStar } from "@plane/blocks/common";
+import { setToast } from "@plane/blocks/toast";
 import { renderFormattedDate, getFileURL } from "@plane/utils";
 // hooks
 import { useMember } from "@/hooks/store/use-member";
+import { useAppRouter } from "@/hooks/use-app-router";
 import { usePageOperations } from "@/hooks/use-page-operations";
 // plane web hooks
 import type { EPageStoreType } from "@/hooks/store";
+import { usePageStore } from "@/hooks/store";
 // store
 import type { TPageInstance } from "@/store/pages/base-page";
 // local imports
@@ -29,15 +33,33 @@ type Props = {
 
 export const BlockItemAction = observer(function BlockItemAction(props: Props) {
   const { page, parentRef, storeType } = props;
+  // router
+  const router = useAppRouter();
+  const { workspaceSlug, projectId } = useParams();
   // store hooks
   const { getUserDetails } = useMember();
+  const { canCurrentUserCreatePage, createPage } = usePageStore(storeType);
   // page operations
   const { pageOperations } = usePageOperations({
     page,
   });
   // derived values
-  const { access, created_at, is_favorite, owned_by, canCurrentUserFavoritePage } = page;
+  const { access, archived_at, created_at, is_favorite, owned_by, canCurrentUserFavoritePage } = page;
   const ownerDetails = owned_by ? getUserDetails(owned_by) : undefined;
+
+  // a sub-page inherits the parent's access so a private parent never gets public children
+  const handleAddSubPage = async () => {
+    try {
+      const subPage = await createPage({ parent: page.id, access });
+      if (subPage?.id) router.push(`/${workspaceSlug}/projects/${projectId}/pages/${subPage.id}`);
+    } catch (err) {
+      setToast({
+        type: "error",
+        title: "Error!",
+        message: (err as { error?: string })?.error || "Sub-page could not be created. Please try again.",
+      });
+    }
+  };
 
   return (
     <>
@@ -81,7 +103,17 @@ export const BlockItemAction = observer(function BlockItemAction(props: Props) {
 
       {/* quick actions dropdown */}
       <PageActions
+        extraOptions={[
+          {
+            key: "add-sub-page",
+            action: handleAddSubPage,
+            title: "Add sub-page",
+            icon: AddOutline,
+            shouldRender: canCurrentUserCreatePage && !archived_at,
+          },
+        ]}
         optionsOrder={[
+          "add-sub-page",
           "open-in-new-tab",
           "copy-link",
           "make-a-copy",
