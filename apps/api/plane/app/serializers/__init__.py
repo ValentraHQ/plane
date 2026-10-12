@@ -105,6 +105,7 @@ from .page import (
     PageVersionDetailSerializer,
     WorkspacePageSerializer,
 )
+from .wiki import WikiSpaceSerializer, WikiSpaceMemberSerializer
 
 from .estimate import (
     EstimateSerializer,

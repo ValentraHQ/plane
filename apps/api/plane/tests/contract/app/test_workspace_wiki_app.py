@@ -11,7 +11,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from plane.db.models import Page, PageVersion, Project, ProjectMember, ProjectPage, WorkspaceMember
+from plane.db.models import Page, PageVersion, Project, ProjectMember, ProjectPage, WikiSpace, WorkspaceMember
 from plane.tests.factories import UserFactory
 
 
@@ -20,9 +20,23 @@ def _wiki_url(slug, page_id=None, suffix=""):
     return f"{base}{page_id}/{suffix}" if page_id else base
 
 
-def _wiki_page(workspace, owner, name, parent=None, access=Page.PUBLIC_ACCESS, **extra):
+def _default_space(workspace):
+    space, _ = WikiSpace.objects.get_or_create(
+        workspace=workspace, identifier="GENERAL", defaults={"name": "General", "is_default": True}
+    )
+    return space
+
+
+def _wiki_page(workspace, owner, name, parent=None, access=Page.PUBLIC_ACCESS, space=None, **extra):
     return Page.objects.create(
-        workspace=workspace, owned_by=owner, name=name, parent=parent, access=access, is_global=True, **extra
+        workspace=workspace,
+        owned_by=owner,
+        name=name,
+        parent=parent,
+        access=access,
+        is_global=True,
+        space=space or (parent.space if parent else _default_space(workspace)),
+        **extra,
     )
 
 
@@ -43,11 +57,15 @@ def member(db, workspace):
 class TestWorkspaceWiki:
     @pytest.mark.django_db
     def test_create_top_level_page(self, session_client, workspace):
-        response = session_client.post(_wiki_url(workspace.slug), {"name": "Handbook"}, format="json")
+        space = _default_space(workspace)
+        response = session_client.post(
+            _wiki_url(workspace.slug), {"name": "Handbook", "space": str(space.id)}, format="json"
+        )
 
         assert response.status_code == status.HTTP_201_CREATED
         page = Page.objects.get(pk=response.json()["id"])
         assert page.is_global is True
+        assert page.space_id == space.id
         assert not ProjectPage.objects.filter(page=page).exists()
         assert response.json()["project_ids"] == []
 

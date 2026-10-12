@@ -14,6 +14,9 @@ from plane.app.views import (
     WorkspacePageViewSet,
     WorkspacePagesDescriptionViewSet,
     WorkspacePageVersionEndpoint,
+    WikiSpacePageTreeEndpoint,
+    WikiSpaceViewSet,
+    WikiSpaceMemberViewSet,
 )
 
 urlpatterns = [
@@ -55,6 +58,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/pages/<uuid:page_id>/access/",
         PageViewSet.as_view({"post": "access"}),
         name="project-pages-access",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/pages/<uuid:page_id>/permissions/",
+        PageViewSet.as_view({"get": "permissions"}),
+        name="project-page-permissions",
     ),
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/pages/<uuid:page_id>/description/",
@@ -116,5 +124,41 @@ urlpatterns = [
         "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/versions/<uuid:pk>/",
         WorkspacePageVersionEndpoint.as_view(),
         name="workspace-wiki-page-versions",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/permissions/",
+        WorkspacePageViewSet.as_view({"get": "permissions"}),
+        name="workspace-wiki-page-permissions",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/move/",
+        WorkspacePageViewSet.as_view({"post": "move"}),
+        name="workspace-wiki-page-move",
+    ),
+    # documentation spaces
+    path(
+        "workspaces/<str:slug>/wiki/spaces/",
+        WikiSpaceViewSet.as_view({"get": "list", "post": "create"}),
+        name="workspace-wiki-spaces",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/spaces/<uuid:space_id>/",
+        WikiSpaceViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"}),
+        name="workspace-wiki-spaces",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/spaces/<uuid:space_id>/members/",
+        WikiSpaceMemberViewSet.as_view({"get": "list", "post": "create"}),
+        name="workspace-wiki-space-members",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/spaces/<uuid:space_id>/members/<uuid:member_id>/",
+        WikiSpaceMemberViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
+        name="workspace-wiki-space-members",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/spaces/<uuid:space_id>/pages-tree/",
+        WikiSpacePageTreeEndpoint.as_view(),
+        name="workspace-wiki-space-page-tree",
     ),
 ]
