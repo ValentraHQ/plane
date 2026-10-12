@@ -8,6 +8,7 @@ import { AppError } from "@/lib/errors";
 import type { HocusPocusServerContext, TDocumentTypes } from "@/types";
 // services
 import { ProjectPageService } from "./project-page.service";
+import { WorkspacePageService } from "./workspace-page.service";
 
 export const getPageService = (documentType: TDocumentTypes, context: HocusPocusServerContext) => {
   if (documentType === "project_page") {
@@ -18,5 +19,11 @@ export const getPageService = (documentType: TDocumentTypes, context: HocusPocus
     });
   }
 
+  if (documentType === "workspace_page") {
+    return new WorkspacePageService({
+      workspaceSlug: context.workspaceSlug,
+      cookie: context.cookie,
+    });
+  }
   throw new AppError(`Invalid document type ${documentType} provided.`);
 };

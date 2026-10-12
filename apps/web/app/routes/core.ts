@@ -105,6 +105,14 @@ export const coreRoutes: RouteConfigEntry[] = [
           route(":workspaceSlug/stickies", "./(all)/[workspaceSlug]/(projects)/stickies/page.tsx"),
         ]),
 
+        // Workspace wiki (pages outside projects)
+        layout("./(all)/[workspaceSlug]/(projects)/wiki/(list)/layout.tsx", [
+          route(":workspaceSlug/wiki", "./(all)/[workspaceSlug]/(projects)/wiki/(list)/page.tsx"),
+        ]),
+        layout("./(all)/[workspaceSlug]/(projects)/wiki/(detail)/layout.tsx", [
+          route(":workspaceSlug/wiki/:pageId", "./(all)/[workspaceSlug]/(projects)/wiki/(detail)/[pageId]/page.tsx"),
+        ]),
+
         // Workspace Views
         layout("./(all)/[workspaceSlug]/(projects)/workspace-views/layout.tsx", [
           route(":workspaceSlug/workspace-views", "./(all)/[workspaceSlug]/(projects)/workspace-views/page.tsx"),
