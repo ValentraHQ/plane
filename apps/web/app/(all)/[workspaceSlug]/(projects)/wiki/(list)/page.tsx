@@ -10,6 +10,7 @@ import Link from "next/link";
 import useSWR from "swr";
 // plane imports
 import { EmptyStateDetailed } from "@plane/blocks/empty-state";
+import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { GlobeOutline, LockOutline } from "@makeplane/propel/icons";
 import { EWikiSpaceAccess, EWikiSpaceRole } from "@plane/types";
 // components
@@ -17,6 +18,7 @@ import { LogoSpinner } from "@/components/common/logo-spinner";
 import { PageHead } from "@/components/core/page-title";
 import { WikiSpaceIcon } from "@/components/wiki/space-switcher";
 // hooks
+import { useUserPermissions } from "@/hooks/store/user";
 import { useWikiSpaces } from "@/hooks/store/use-wiki-spaces";
 import type { Route } from "./+types/page";
 
@@ -30,6 +32,11 @@ const ROLE_LABELS: Record<number, string> = {
 function WikiSpacesPage({ params }: Route.ComponentProps) {
   const { workspaceSlug } = params;
   const { spaceIds, getSpaceById, fetchSpaces, setCurrentSpace } = useWikiSpaces();
+  const { allowPermissions } = useUserPermissions();
+  const canCreateSpace = allowPermissions(
+    [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    EUserPermissionsLevel.WORKSPACE
+  );
   const { isLoading } = useSWR(workspaceSlug ? `WIKI_SPACES_${workspaceSlug}` : null, () => fetchSpaces(workspaceSlug));
 
   // the directory is not inside any space
@@ -46,8 +53,12 @@ function WikiSpacesPage({ params }: Route.ComponentProps) {
         ) : spaceIds.length === 0 ? (
           <EmptyStateDetailed
             assetKey="page"
-            title="Create your first documentation space"
-            description="Spaces group related documentation — for a team, product or topic — with their own page tree and access."
+            title={canCreateSpace ? "Create your first documentation space" : "No documentation spaces available"}
+            description={
+              canCreateSpace
+                ? "Spaces group related documentation — for a team, product or topic — with their own page tree and access."
+                : "You don't have access to any documentation spaces in this workspace."
+            }
           />
         ) : (
           <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-6 lg:grid-cols-3">

@@ -9,6 +9,7 @@ import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 // plane imports
 import { Button } from "@makeplane/propel/components/button";
+import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { PagesOutline } from "@makeplane/propel/icons";
 import { Breadcrumbs } from "@plane/blocks/breadcrumb";
 import { Header } from "@plane/blocks/layout";
@@ -16,12 +17,19 @@ import { Header } from "@plane/blocks/layout";
 import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { WikiSpaceFormModal } from "@/components/wiki/space-form-modal";
 // hooks
+import { useUserPermissions } from "@/hooks/store/user";
 import { useAppRouter } from "@/hooks/use-app-router";
 
 export const WikiPagesListHeader = observer(function WikiPagesListHeader() {
   const { workspaceSlug } = useParams();
   const router = useAppRouter();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const { allowPermissions } = useUserPermissions();
+  // guests have no wiki access; the API refuses them too
+  const canCreateSpace = allowPermissions(
+    [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+    EUserPermissionsLevel.WORKSPACE
+  );
 
   return (
     <>
@@ -34,13 +42,15 @@ export const WikiPagesListHeader = observer(function WikiPagesListHeader() {
           </Breadcrumbs>
         </Header.LeftItem>
         <Header.RightItem>
-          <Button
-            variant="primary"
-            size="md"
-            stretch="auto"
-            label="Create space"
-            onClick={() => setIsCreateOpen(true)}
-          />
+          {canCreateSpace && (
+            <Button
+              variant="primary"
+              size="md"
+              stretch="auto"
+              label="Create space"
+              onClick={() => setIsCreateOpen(true)}
+            />
+          )}
         </Header.RightItem>
       </Header>
       <WikiSpaceFormModal
