@@ -7,8 +7,9 @@
 import { computed, makeObservable } from "mobx";
 import { computedFn } from "mobx-utils";
 // constants
-import { EPageAccess, EUserPermissions } from "@plane/constants";
+import { EPageAccess } from "@plane/constants";
 import type { TPage } from "@plane/types";
+import { EWikiSpaceRole } from "@plane/types";
 // plane web store
 import type { RootStore } from "@/store/root.store";
 // services
@@ -81,30 +82,33 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
     });
   }
 
-  private getWorkspaceRole = computedFn((): number | undefined => {
-    const { workspaceSlug } = this.rootStore.router;
-    if (!workspaceSlug) return undefined;
-    return this.rootStore.user.permission.getWorkspaceRoleByWorkspaceSlug(workspaceSlug.toString()) as
-      | number
-      | undefined;
-  });
-
-  private get isWorkspaceMember() {
-    const role = this.getWorkspaceRole();
-    return !!role && role >= EUserPermissions.MEMBER;
+  /**
+   * Same rules as the API (plane.utils.wiki_permissions): the space role decides,
+   * page access (public/private) narrows who can see the page.
+   */
+  private get spaceRole() {
+    return this.rootStore.wikiSpaces.getSpaceRole(this.space);
   }
 
-  private get isWorkspaceAdmin() {
-    return this.getWorkspaceRole() === EUserPermissions.ADMIN;
-  }
-
-  get canCurrentUserAccessPage() {
+  private get canView() {
     return this.access === EPageAccess.PUBLIC || this.isCurrentUserOwner;
   }
 
+  private get canEdit() {
+    return this.canView && !!this.spaceRole && this.spaceRole >= EWikiSpaceRole.EDITOR;
+  }
+
+  // lock, archive, delete, move: a space admin, or the owner while still an editor
+  private get canManage() {
+    return this.canView && (this.spaceRole === EWikiSpaceRole.ADMIN || (this.isCurrentUserOwner && this.canEdit));
+  }
+
+  get canCurrentUserAccessPage() {
+    return this.canView;
+  }
+
   get canCurrentUserEditPage() {
-    const isPagePublic = this.access === EPageAccess.PUBLIC;
-    return (isPagePublic && this.isWorkspaceMember) || (!isPagePublic && this.isCurrentUserOwner);
+    return this.canEdit;
   }
 
   // not supported for wiki pages yet (no API)
@@ -113,20 +117,20 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
   }
 
   get canCurrentUserLockPage() {
-    return this.isCurrentUserOwner || this.isWorkspaceAdmin;
+    return this.canManage;
   }
 
   // the API only lets the owner change access
   get canCurrentUserChangeAccess() {
-    return this.isCurrentUserOwner;
+    return this.isCurrentUserOwner && this.canEdit;
   }
 
   get canCurrentUserArchivePage() {
-    return this.isCurrentUserOwner || this.isWorkspaceAdmin;
+    return this.canManage;
   }
 
   get canCurrentUserDeletePage() {
-    return this.isCurrentUserOwner || this.isWorkspaceAdmin;
+    return this.canManage;
   }
 
   // favourites are a project feature
@@ -134,17 +138,16 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
     return false;
   }
 
-  // moving between projects does not apply to wiki pages
+  // moving within/between documentation spaces (tree drag-and-drop, Move to…)
   get canCurrentUserMovePage() {
-    return false;
+    return this.canManage && !this.archived_at;
   }
 
   /**
-   * @description returns true if the page can be edited
+   * @description returns true if the page content can be edited right now
    */
   get isContentEditable() {
-    const isPublic = this.access === EPageAccess.PUBLIC;
-    return !this.archived_at && !this.is_locked && (this.isCurrentUserOwner || (isPublic && this.isWorkspaceMember));
+    return !this.archived_at && !this.is_locked && this.canEdit;
   }
 
   getRedirectionLink = computedFn(() => {

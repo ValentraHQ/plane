@@ -10,6 +10,7 @@ import type { TUserDetails } from "@plane/editor";
 import { logger } from "@plane/logger";
 import { AppError } from "@/lib/errors";
 // services
+import { getPageService } from "@/services/page/handler";
 import { UserService } from "@/services/user.service";
 // types
 import type { HocusPocusServerContext, TDocumentTypes } from "@/types";
@@ -26,11 +27,15 @@ export const onAuthenticate = async ({
   requestParameters,
   context,
   token,
+  documentName,
+  connection,
 }: {
   requestHeaders: IncomingHttpHeaders;
   context: HocusPocusServerContext;
   requestParameters: URLSearchParams;
   token: string;
+  documentName: string;
+  connection: { readOnly: boolean };
 }) => {
   let cookie: string | undefined = undefined;
   let userId: string | undefined = undefined;
@@ -66,10 +71,46 @@ export const onAuthenticate = async ({
   context.userId = userId;
   context.workspaceSlug = requestParameters.get("workspaceSlug");
 
-  return await handleAuthentication({
+  const authResult = await handleAuthentication({
     cookie: context.cookie,
     userId: context.userId,
   });
+
+  // authentication says who the user is; this decides what they may do with this page
+  await authorizeDocument({ context, documentName, connection });
+
+  return authResult;
+};
+
+/**
+ * Authorize a connection to one page (documentName is the page id).
+ * - no view permission: the connection is refused before any document data is sent
+ * - view without edit (viewers, locked or archived pages): the connection is read-only,
+ *   so the server neither applies nor broadcasts that client's updates
+ * The API decides, using the connecting user's own cookie.
+ */
+export const authorizeDocument = async ({
+  context,
+  documentName,
+  connection,
+}: {
+  context: HocusPocusServerContext;
+  documentName: string;
+  connection: { readOnly: boolean };
+}) => {
+  let canView = false;
+  let canEditContent = false;
+  try {
+    const permissions = await getPageService(context.documentType, context).fetchPermissions(documentName);
+    canView = !!permissions?.can_view;
+    canEditContent = !!permissions?.can_edit_content;
+  } catch (error) {
+    logger.error("Page authorization failed", new AppError(error, { context: { operation: "authorizeDocument" } }));
+  }
+  if (!canView) {
+    throw new AppError("Not authorized to open this page", { code: "AUTH_FORBIDDEN" });
+  }
+  connection.readOnly = !canEditContent;
 };
 
 export const handleAuthentication = async ({ cookie, userId }: { cookie: string; userId: string }) => {

@@ -29,11 +29,13 @@ type Props = {
   pageType: TPageNavigationTabs;
   projectId: string;
   storeType: EPageStoreType;
+  /** where the Public/Private/Archived tabs link to; defaults to the project's pages */
+  tabsBasePath?: string;
   workspaceSlug: string;
 };
 
 export const PagesListHeaderRoot = observer(function PagesListHeaderRoot(props: Props) {
-  const { pageType, projectId, storeType, workspaceSlug } = props;
+  const { pageType, projectId, storeType, workspaceSlug, tabsBasePath } = props;
   const { t } = useTranslation();
   // store hooks
   const { filters, updateFilters, clearAllFilters } = usePageStore(storeType);
@@ -62,7 +64,12 @@ export const PagesListHeaderRoot = observer(function PagesListHeaderRoot(props: 
     <>
       <Header variant={EHeaderVariant.SECONDARY}>
         <Header.LeftItem>
-          <PageTabNavigation workspaceSlug={workspaceSlug} projectId={projectId} pageType={pageType} />
+          <PageTabNavigation
+            workspaceSlug={workspaceSlug}
+            projectId={projectId}
+            pageType={pageType}
+            basePath={tabsBasePath}
+          />
         </Header.LeftItem>
         <Header.RightItem className="items-center">
           <PageSearchInput

@@ -6,7 +6,7 @@
 
 // types
 import { API_BASE_URL } from "@plane/constants";
-import type { TDocumentPayload, TPage, TPageVersion } from "@plane/types";
+import type { TDocumentPayload, TPage, TPageVersion, TWikiPageMovePayload } from "@plane/types";
 // services
 import { APIService } from "@/services/api.service";
 
@@ -24,9 +24,9 @@ export class WorkspacePageService extends APIService {
   }
 
   /**
-   * @description fetch top-level wiki pages, or the direct children of params.parent_id
+   * @description fetch top-level wiki pages (optionally of one space), or the direct children of params.parent_id
    */
-  async fetchAll(workspaceSlug: string, params?: { parent_id?: string }): Promise<TPage[]> {
+  async fetchAll(workspaceSlug: string, params?: { parent_id?: string; space_id?: string }): Promise<TPage[]> {
     return this.get(this.pagesPath(workspaceSlug), { params })
       .then((response) => response?.data)
       .catch((error) => {
@@ -124,6 +124,28 @@ export class WorkspacePageService extends APIService {
       .then((response) => response?.data)
       .catch((error) => {
         throw error;
+      });
+  }
+
+  /**
+   * @description move a page (with its sub-pages) to another parent, space and/or position
+   */
+  async move(workspaceSlug: string, pageId: string, data: TWikiPageMovePayload): Promise<TPage> {
+    return this.post(`${this.pagesPath(workspaceSlug, pageId)}move/`, data)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async fetchPermissions(
+    workspaceSlug: string,
+    pageId: string
+  ): Promise<{ can_view: boolean; can_edit: boolean; can_manage: boolean; can_edit_content: boolean }> {
+    return this.get(`${this.pagesPath(workspaceSlug, pageId)}permissions/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
       });
   }
 

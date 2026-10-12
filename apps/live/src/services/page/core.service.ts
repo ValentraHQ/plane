@@ -16,11 +16,38 @@ export type TUserMention = {
   avatar_url?: string;
 };
 
+export type TPagePermissions = {
+  can_view: boolean;
+  can_edit: boolean;
+  can_manage: boolean;
+  // can_edit and the page is neither locked nor archived
+  can_edit_content: boolean;
+};
+
 export abstract class PageCoreService extends APIService {
   protected abstract basePath: string;
 
   constructor() {
     super();
+  }
+
+  /**
+   * Effective permissions of the connecting user (via their cookie) on the page.
+   * Used to authorize a real-time connection before any document data is sent.
+   */
+  async fetchPermissions(pageId: string): Promise<TPagePermissions> {
+    try {
+      const response = await this.get(`${this.basePath}/pages/${pageId}/permissions/`, {
+        headers: this.getHeader(),
+      });
+      return response?.data as TPagePermissions;
+    } catch (error) {
+      const appError = new AppError(error, {
+        context: { operation: "fetchPermissions", pageId },
+      });
+      logger.error("Failed to fetch page permissions", appError);
+      throw appError;
+    }
   }
 
   async fetchDetails(pageId: string): Promise<TPage> {
