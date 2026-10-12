@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+# Django imports
+from django.db.models import Q
+
 # Third party imports
 from rest_framework import status
 from rest_framework.response import Response
@@ -12,6 +15,7 @@ from plane.app.serializers import WorkspaceRecentVisitSerializer
 # Modules imports
 from ..base import BaseViewSet
 from plane.app.permissions import allow_permission, ROLE
+from plane.utils.page_access import viewable_project_pages
 
 
 class UserRecentVisitViewSet(BaseViewSet):
@@ -31,6 +35,10 @@ class UserRecentVisitViewSet(BaseViewSet):
             user_recent_visits = user_recent_visits.filter(entity_name=entity_name)
 
         user_recent_visits = user_recent_visits.filter(entity_name__in=["issue", "page", "project"])
+        # a visit shows the page title: drop pages the user can no longer see
+        user_recent_visits = user_recent_visits.exclude(
+            Q(entity_name="page") & ~Q(entity_identifier__in=viewable_project_pages(slug, request.user).values("id"))
+        )
 
         serializer = WorkspaceRecentVisitSerializer(user_recent_visits[:20], many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)

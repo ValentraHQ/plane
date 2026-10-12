@@ -181,6 +181,7 @@ from .page.workspace import (
     WikiSpacePageTreeEndpoint,
 )
 from .page.space import WikiSpaceViewSet, WikiSpaceMemberViewSet
+from .page.restriction import ProjectPageRestrictionEndpoint, WorkspacePageRestrictionEndpoint
 
 from .search.base import GlobalSearchEndpoint, SearchEndpoint
 from .search.issue import IssueSearchEndpoint

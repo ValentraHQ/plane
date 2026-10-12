@@ -188,3 +188,41 @@ class PageVersion(BaseModel):
             else strip_tags(self.description_html)
         )
         super(PageVersion, self).save(*args, **kwargs)
+
+
+class PageRestriction(BaseModel):
+    """
+    Who may view or edit a page (wiki or project), Confluence style.
+
+    A page with VIEW rows is visible only to the listed members, its owner and admins
+    (space admins for wiki pages, project admins for project pages); EDIT rows do the
+    same for editing. Restrictions apply to the whole sub-tree: a page is only as open
+    as its most restrictive ancestor. Restrictions only narrow access, they never grant
+    it. Resolution lives in plane.utils.page_access.
+    """
+
+    VIEW = "view"
+    EDIT = "edit"
+    KIND_CHOICES = ((VIEW, "View"), (EDIT, "Edit"))
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="page_restrictions")
+    page = models.ForeignKey(Page, on_delete=models.CASCADE, related_name="restrictions")
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES)
+    member = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="page_restrictions")
+
+    class Meta:
+        verbose_name = "Page Restriction"
+        verbose_name_plural = "Page Restrictions"
+        db_table = "page_restrictions"
+        ordering = ("created_at",)
+        unique_together = ["page", "kind", "member", "deleted_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["page", "kind", "member"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="page_restriction_unique_page_kind_member_when_deleted_at_null",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.kind} {self.page_id} {self.member_id}"

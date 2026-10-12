@@ -15,6 +15,7 @@ from plane.app.views.base import BaseAPIView
 from plane.db.models import UserFavorite, Workspace
 from plane.app.serializers import UserFavoriteSerializer
 from plane.app.permissions import allow_permission, ROLE
+from plane.utils.page_access import viewable_project_pages
 
 
 class WorkspaceFavoriteEndpoint(BaseAPIView):
@@ -30,6 +31,10 @@ class WorkspaceFavoriteEndpoint(BaseAPIView):
                 & Q(project__project_projectmember__member=request.user)
                 & Q(project__project_projectmember__is_active=True)
             )
+        )
+        # a favourite shows the page title: drop pages the user can no longer see
+        favorites = favorites.exclude(
+            Q(entity_type="page") & ~Q(entity_identifier__in=viewable_project_pages(slug, request.user).values("id"))
         )
         serializer = UserFavoriteSerializer(favorites, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -92,6 +97,10 @@ class WorkspaceFavoriteGroupEndpoint(BaseAPIView):
                 & Q(project__project_projectmember__member=request.user)
                 & Q(project__project_projectmember__is_active=True)
             )
+        )
+        # a favourite shows the page title: drop pages the user can no longer see
+        favorites = favorites.exclude(
+            Q(entity_type="page") & ~Q(entity_identifier__in=viewable_project_pages(slug, request.user).values("id"))
         )
         serializer = UserFavoriteSerializer(favorites, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)

@@ -20,13 +20,15 @@ Page rules inside a space:
   - edit:   can view and has SPACE_EDITOR or above
   - manage: (lock, archive, delete, move) can view and is a space admin, or the
             owner while still an editor
+Inherited privacy and page restrictions then narrow these rules further; page-level
+resolution lives in plane.utils.page_access.
 """
 
 # Django imports
 from django.db.models import Q
 
 # Module imports
-from plane.db.models import Page, WikiSpace, WikiSpaceMember, WorkspaceMember
+from plane.db.models import Page, WikiSpace, WikiSpaceMember, Workspace, WorkspaceMember
 
 WORKSPACE_ADMIN = 20
 WORKSPACE_MEMBER = 15
@@ -107,25 +109,25 @@ def viewable_spaces(slug, user):
 
 
 def viewable_wiki_pages(slug, user):
-    """Wiki pages the user can see: in a space they can access, and public or their own."""
-    return Page.objects.filter(
+    """Wiki pages the user can see: in a space they can access, public or their own, and not
+    hidden by a private or view-restricted ancestor (see plane.utils.page_access)."""
+    from plane.utils.page_access import exclude_hidden
+
+    pages = Page.objects.filter(
         workspace__slug=slug,
         is_global=True,
         space__in=viewable_spaces(slug, user),
     ).filter(Q(owned_by=user) | Q(access=Page.PUBLIC_ACCESS))
+    workspace_id = Workspace.objects.filter(slug=slug).values_list("id", flat=True).first()
+    if workspace_id is None:
+        return pages.none()
+    return exclude_hidden(pages, user, workspace_id)
 
 
 def page_permissions(page, user, role=_UNSET):
-    """{can_view, can_edit, can_manage} for a wiki page."""
-    denied = {"can_view": False, "can_edit": False, "can_manage": False}
+    """{can_view, can_edit, can_manage, can_edit_content} for a wiki page, restrictions included."""
+    from plane.utils.page_access import DENIED, page_permissions as resolve
+
     if not page.is_global or page.space_id is None:
-        return denied
-    if role is _UNSET:
-        role = space_role(page.space, user)
-    if role is None:
-        return denied
-    is_owner = page.owned_by_id == user.id
-    can_view = is_owner or page.access == Page.PUBLIC_ACCESS
-    can_edit = can_view and role >= SPACE_EDITOR
-    can_manage = can_view and (role >= SPACE_ADMIN or (is_owner and role >= SPACE_EDITOR))
-    return {"can_view": can_view, "can_edit": can_edit, "can_manage": can_manage}
+        return dict(DENIED)
+    return resolve(page, user, space_role=role)

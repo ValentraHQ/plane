@@ -9,6 +9,7 @@ from rest_framework.response import Response
 # Module imports
 from plane.db.models import PageVersion
 from ..base import BaseAPIView
+from .base import project_page_or_error
 from plane.app.serializers import PageVersionSerializer, PageVersionDetailSerializer
 from plane.app.permissions import ProjectPagePermission
 
@@ -17,6 +18,10 @@ class PageVersionEndpoint(BaseAPIView):
     permission_classes = [ProjectPagePermission]
 
     def get(self, request, slug, project_id, page_id, pk=None):
+        # versions hold the page content: same visibility as the page itself
+        _, _, error = project_page_or_error(request, slug, project_id, page_id)
+        if error:
+            return error
         # Check if pk is provided
         if pk:
             # Return a single page version. Scope to an *active* ProjectPage link

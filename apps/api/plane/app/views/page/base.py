@@ -41,13 +41,14 @@ from plane.app.serializers import (
 from plane.db.models import (
     Page,
     PageLog,
+    PageRestriction,
     UserFavorite,
     ProjectMember,
     ProjectPage,
-    Project,
     UserRecentVisit,
 )
 from plane.utils.error_codes import ERROR_CODES
+from plane.utils.page_access import page_permissions, viewable_project_pages
 from plane.utils.order_queryset import PAGE_ORDER_BY_ALLOWLIST, sanitize_order_by
 
 # Local imports
@@ -127,6 +128,33 @@ def validate_page_parent(parent_id, slug, project_id, page_id=None, wiki_pages=N
     return None
 
 
+def project_page_or_error(request, slug, project_id, page_id, need="can_view"):
+    """(page, permissions, None) or (None, None, error response), through the central resolver.
+
+    Pages the user cannot see (including ones hidden by a restricted or private ancestor)
+    are reported as missing, so their existence is not revealed.
+    """
+    page = Page.objects.filter(
+        pk=page_id,
+        workspace__slug=slug,
+        projects__id=project_id,
+        project_pages__deleted_at__isnull=True,
+    ).first()
+    perms = page_permissions(page, request.user, project_id=project_id) if page else None
+    if page is None or not perms["can_view"]:
+        return None, None, Response({"error": "Page not found"}, status=status.HTTP_404_NOT_FOUND)
+    if not perms[need]:
+        return (
+            None,
+            None,
+            Response(
+                {"error": "You don't have permission to perform this action on the page"},
+                status=status.HTTP_403_FORBIDDEN,
+            ),
+        )
+    return page, perms, None
+
+
 class PageViewSet(BaseViewSet):
     serializer_class = PageSerializer
     model = Page
@@ -141,9 +169,9 @@ class PageViewSet(BaseViewSet):
             workspace__slug=self.kwargs.get("slug"),
         )
         # Visible, non-archived direct children; lets the UI know a page can be expanded
+        visible = viewable_project_pages(self.kwargs.get("slug"), self.request.user, self.kwargs.get("project_id"))
         sub_pages_count = (
-            Page.objects.filter(parent_id=OuterRef("pk"), archived_at__isnull=True)
-            .filter(Q(owned_by=self.request.user) | Q(access=0))
+            visible.filter(parent_id=OuterRef("pk"), archived_at__isnull=True)
             .order_by()
             .values("parent_id")
             .annotate(count=Count("id"))
@@ -153,12 +181,8 @@ class PageViewSet(BaseViewSet):
             super()
             .get_queryset()
             .filter(workspace__slug=self.kwargs.get("slug"))
-            .filter(
-                projects__project_projectmember__member=self.request.user,
-                projects__project_projectmember__is_active=True,
-                projects__archived_at__isnull=True,
-            )
-            .filter(Q(owned_by=self.request.user) | Q(access=0))
+            # who may see what (roles, guests, private pages, inherited restrictions)
+            .filter(pk__in=visible.values("pk"))
             .prefetch_related("projects")
             .select_related("workspace")
             .select_related("owned_by")
@@ -208,6 +232,10 @@ class PageViewSet(BaseViewSet):
         parent_error = validate_page_parent(request.data.get("parent"), slug, project_id)
         if parent_error:
             return Response({"error": parent_error}, status=status.HTTP_400_BAD_REQUEST)
+        if request.data.get("parent"):
+            _, _, error = project_page_or_error(request, slug, project_id, request.data.get("parent"), "can_edit")
+            if error:
+                return error
 
         serializer = PageSerializer(
             data=request.data,
@@ -235,12 +263,9 @@ class PageViewSet(BaseViewSet):
 
     def partial_update(self, request, slug, project_id, page_id):
         try:
-            page = Page.objects.get(
-                pk=page_id,
-                workspace__slug=slug,
-                projects__id=project_id,
-                project_pages__deleted_at__isnull=True,
-            )
+            page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+            if error:
+                return error
 
             if page.is_locked:
                 return Response({"error": "Page is locked"}, status=status.HTTP_400_BAD_REQUEST)
@@ -248,6 +273,11 @@ class PageViewSet(BaseViewSet):
             parent_error = validate_page_parent(request.data.get("parent"), slug, project_id, page_id=page_id)
             if parent_error:
                 return Response({"error": parent_error}, status=status.HTTP_400_BAD_REQUEST)
+            new_parent = request.data.get("parent")
+            if new_parent and str(new_parent) != str(page.parent_id or ""):
+                _, _, error = project_page_or_error(request, slug, project_id, new_parent, "can_edit")
+                if error:
+                    return error
 
             # Only update access if the page owner is the requesting  user
             if page.access != request.data.get("access", page.access) and page.owned_by_id != request.user.id:
@@ -280,98 +310,45 @@ class PageViewSet(BaseViewSet):
         page = self.get_queryset().filter(pk=page_id).first()
         if page is None:
             return Response({"error": "Page not found"}, status=status.HTTP_404_NOT_FOUND)
-        project = Project.objects.get(pk=project_id)
+        # guests, private pages and restrictions are already applied by get_queryset()
         track_visit = request.query_params.get("track_visit", "true").lower() == "true"
-
-        """
-        if the role is guest and guest_view_all_features is false and owned by is not
-        the requesting user then dont show the page
-        """
-
-        if (
-            ProjectMember.objects.filter(
-                workspace__slug=slug,
+        issue_ids = PageLog.objects.filter(page_id=page_id, entity_name="issue").values_list(
+            "entity_identifier", flat=True
+        )
+        data = PageDetailSerializer(page).data
+        data["issue_ids"] = issue_ids
+        data["permissions"] = page_permissions(page, request.user, project_id=project_id)
+        if track_visit:
+            recent_visited_task.delay(
+                slug=slug,
+                entity_name="page",
+                entity_identifier=page_id,
+                user_id=request.user.id,
                 project_id=project_id,
-                member=request.user,
-                role=5,
-                is_active=True,
-            ).exists()
-            and not project.guest_view_all_features
-            and not page.owned_by == request.user
-        ):
-            return Response(
-                {"error": "You are not allowed to view this page"},
-                status=status.HTTP_400_BAD_REQUEST,
             )
-
-        if page is None:
-            return Response({"error": "Page not found"}, status=status.HTTP_404_NOT_FOUND)
-        else:
-            issue_ids = PageLog.objects.filter(page_id=page_id, entity_name="issue").values_list(
-                "entity_identifier", flat=True
-            )
-            data = PageDetailSerializer(page).data
-            data["issue_ids"] = issue_ids
-            if track_visit:
-                recent_visited_task.delay(
-                    slug=slug,
-                    entity_name="page",
-                    entity_identifier=page_id,
-                    user_id=request.user.id,
-                    project_id=project_id,
-                )
-            return Response(data, status=status.HTTP_200_OK)
+        return Response(data, status=status.HTTP_200_OK)
 
     def permissions(self, request, slug, project_id, page_id):
-        """Effective permissions; used by the real-time server before opening a connection.
-
-        ProjectPagePermission has already rejected non-members and private pages of others.
-        The edit rule mirrors the web app's ProjectPage.isContentEditable.
-        """
-        page = self.get_queryset().filter(pk=page_id).first()
-        if page is None:
-            return Response({"error": "Page not found"}, status=status.HTTP_404_NOT_FOUND)
-        role = (
-            ProjectMember.objects.filter(project_id=project_id, member=request.user, is_active=True)
-            .values_list("role", flat=True)
-            .first()
-        )
-        is_owner = page.owned_by_id == request.user.id
-        is_public = page.access == Page.PUBLIC_ACCESS
-        can_view = is_owner or is_public
-        # same guest rule as retrieve(): guests only see others' pages if the project allows it
-        if role == ROLE.GUEST.value and not is_owner:
-            can_view = can_view and Project.objects.filter(pk=project_id, guest_view_all_features=True).exists()
-        can_edit = can_view and (is_owner or (is_public and role is not None and role >= ROLE.MEMBER.value))
-        return Response(
-            {
-                "can_view": can_view,
-                "can_edit": can_edit,
-                "can_manage": is_owner or role == ROLE.ADMIN.value,
-                "can_edit_content": can_edit and not page.is_locked and not page.archived_at,
-            },
-            status=status.HTTP_200_OK,
-        )
+        """Effective permissions (plane.utils.page_access); used by the real-time server
+        before opening a connection."""
+        page, perms, error = project_page_or_error(request, slug, project_id, page_id)
+        if error:
+            return error
+        return Response(perms, status=status.HTTP_200_OK)
 
     def lock(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         page.is_locked = True
         page.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def unlock(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         page.is_locked = False
         page.save()
@@ -380,12 +357,9 @@ class PageViewSet(BaseViewSet):
 
     def access(self, request, slug, project_id, page_id):
         access = request.data.get("access", 0)
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         # Only update access if the page owner is the requesting user
         if page.access != request.data.get("access", page.access) and page.owned_by_id != request.user.id:
@@ -409,28 +383,14 @@ class PageViewSet(BaseViewSet):
                 return Response({"error": "Invalid parent_id"}, status=status.HTTP_400_BAD_REQUEST)
         else:
             queryset = queryset.filter(parent__isnull=True)
-        project = Project.objects.get(pk=project_id)
-        if (
-            ProjectMember.objects.filter(
-                workspace__slug=slug,
-                project_id=project_id,
-                member=request.user,
-                role=5,
-                is_active=True,
-            ).exists()
-            and not project.guest_view_all_features
-        ):
-            queryset = queryset.filter(owned_by=request.user)
+        # guests, private pages and restrictions are already applied by get_queryset()
         pages = PageSerializer(queryset, many=True).data
         return Response(pages, status=status.HTTP_200_OK)
 
     def archive(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         # only the owner or admin can archive the page
         if (
@@ -456,12 +416,9 @@ class PageViewSet(BaseViewSet):
         return Response({"archived_at": str(datetime.now())}, status=status.HTTP_200_OK)
 
     def unarchive(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         # only the owner or admin can un archive the page
         if (
@@ -485,12 +442,9 @@ class PageViewSet(BaseViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def destroy(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         if page.archived_at is None:
             return Response(
@@ -538,36 +492,7 @@ class PageViewSet(BaseViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def summary(self, request, slug, project_id):
-        queryset = (
-            Page.objects.filter(workspace__slug=slug)
-            .filter(
-                projects__project_projectmember__member=self.request.user,
-                projects__project_projectmember__is_active=True,
-                projects__archived_at__isnull=True,
-            )
-            .filter(parent__isnull=True)
-            .filter(Q(owned_by=request.user) | Q(access=0))
-            .annotate(
-                project=Exists(
-                    ProjectPage.objects.filter(page_id=OuterRef("id"), project_id=self.kwargs.get("project_id"))
-                )
-            )
-            .filter(project=True)
-            .distinct()
-        )
-
-        project = Project.objects.get(pk=project_id)
-        if (
-            ProjectMember.objects.filter(
-                workspace__slug=slug,
-                project_id=project_id,
-                member=request.user,
-                role=ROLE.GUEST.value,
-                is_active=True,
-            ).exists()
-            and not project.guest_view_all_features
-        ):
-            queryset = queryset.filter(owned_by=request.user)
+        queryset = viewable_project_pages(slug, request.user, project_id).filter(parent__isnull=True)
 
         stats = queryset.aggregate(
             public_pages=Count(
@@ -593,6 +518,10 @@ class PageFavoriteViewSet(BaseViewSet):
 
     @allow_permission([ROLE.ADMIN, ROLE.MEMBER])
     def create(self, request, slug, project_id, page_id):
+        # a favourite shows the page title in the sidebar, so only for pages the user can see
+        _, _, error = project_page_or_error(request, slug, project_id, page_id)
+        if error:
+            return error
         _ = UserFavorite.objects.create(
             project_id=project_id,
             entity_identifier=page_id,
@@ -618,13 +547,9 @@ class PagesDescriptionViewSet(BaseViewSet):
     permission_classes = [ProjectPagePermission]
 
     def retrieve(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            Q(owned_by=self.request.user) | Q(access=0),
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id)
+        if error:
+            return error
         binary_data = page.description_binary
 
         def stream_data():
@@ -638,13 +563,9 @@ class PagesDescriptionViewSet(BaseViewSet):
         return response
 
     def partial_update(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            Q(owned_by=self.request.user) | Q(access=0),
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
+        page, _, error = project_page_or_error(request, slug, project_id, page_id, "can_edit")
+        if error:
+            return error
 
         if page.is_locked:
             return Response(
@@ -698,16 +619,15 @@ class PageDuplicateEndpoint(BaseAPIView):
     permission_classes = [ProjectPagePermission]
 
     def post(self, request, slug, project_id, page_id):
-        page = Page.objects.get(
-            pk=page_id,
-            workspace__slug=slug,
-            projects__id=project_id,
-            project_pages__deleted_at__isnull=True,
-        )
-
-        # check for permission
-        if page.access == Page.PRIVATE_ACCESS and page.owned_by_id != request.user.id:
-            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        page, _, error = project_page_or_error(request, slug, project_id, page_id)
+        if error:
+            return error
+        if page.parent_id:
+            # the copy sits next to the original, so it needs edit rights on the parent
+            _, _, error = project_page_or_error(request, slug, project_id, page.parent_id, "can_edit")
+            if error:
+                return error
+        source_page_id = page.id
 
         # get all the project ids where page is present
         project_ids = ProjectPage.objects.filter(page_id=page_id).values_list("project_id", flat=True)
@@ -719,6 +639,21 @@ class PageDuplicateEndpoint(BaseAPIView):
         page.created_by = request.user
         page.updated_by = request.user
         page.save()
+
+        # the copy keeps the original's own restrictions, so copying never widens access
+        PageRestriction.objects.bulk_create(
+            [
+                PageRestriction(
+                    workspace_id=page.workspace_id,
+                    page_id=page.id,
+                    kind=restriction.kind,
+                    member_id=restriction.member_id,
+                    created_by_id=request.user.id,
+                    updated_by_id=request.user.id,
+                )
+                for restriction in PageRestriction.objects.filter(page_id=source_page_id)
+            ]
+        )
 
         for project_id in project_ids:
             ProjectPage.objects.create(

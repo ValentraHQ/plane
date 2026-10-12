@@ -17,6 +17,8 @@ from plane.app.views import (
     WikiSpacePageTreeEndpoint,
     WikiSpaceViewSet,
     WikiSpaceMemberViewSet,
+    ProjectPageRestrictionEndpoint,
+    WorkspacePageRestrictionEndpoint,
 )
 
 urlpatterns = [
@@ -129,6 +131,16 @@ urlpatterns = [
         "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/permissions/",
         WorkspacePageViewSet.as_view({"get": "permissions"}),
         name="workspace-wiki-page-permissions",
+    ),
+    path(
+        "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/restrictions/",
+        WorkspacePageRestrictionEndpoint.as_view(),
+        name="workspace-wiki-page-restrictions",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/pages/<uuid:page_id>/restrictions/",
+        ProjectPageRestrictionEndpoint.as_view(),
+        name="project-page-restrictions",
     ),
     path(
         "workspaces/<str:slug>/wiki/pages/<uuid:page_id>/move/",
