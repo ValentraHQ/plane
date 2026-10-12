@@ -91,8 +91,13 @@ def get_page_descendant_ids(page_id):
         return {str(row[0]) for row in cursor.fetchall()}
 
 
-def validate_page_parent(parent_id, slug, project_id, page_id=None):
-    """Return an error message if parent_id cannot be the parent of page_id, else None."""
+def validate_page_parent(parent_id, slug, project_id, page_id=None, wiki_pages=None):
+    """Return an error message if parent_id cannot be the parent of page_id, else None.
+
+    project_id=None validates within the workspace wiki instead of a project; pass
+    `wiki_pages` (the wiki pages the user may see, already narrowed to the target space)
+    so a parent can only be a visible page of the same space.
+    """
     if not parent_id:
         return None
     try:
@@ -101,14 +106,20 @@ def validate_page_parent(parent_id, slug, project_id, page_id=None):
         return "Invalid parent page"
     if page_id and parent_id == str(page_id):
         return "A page cannot be its own parent"
-    parent = Page.objects.filter(
-        pk=parent_id,
-        workspace__slug=slug,
-        projects__id=project_id,
-        project_pages__deleted_at__isnull=True,
-    ).first()
+    if project_id is None:
+        pages = wiki_pages if wiki_pages is not None else Page.objects.filter(is_global=True)
+        parent = pages.filter(pk=parent_id, workspace__slug=slug).first()
+        if parent is None:
+            return "Parent page not found in this space"
+    else:
+        parent = Page.objects.filter(
+            pk=parent_id,
+            workspace__slug=slug,
+            projects__id=project_id,
+            project_pages__deleted_at__isnull=True,
+        ).first()
     if parent is None:
-        return "Parent page not found in this project"
+        return "Parent page not found in this project" if project_id else "Parent page not found in this wiki"
     if parent.archived_at:
         return "A page cannot be nested under an archived page"
     if page_id and parent_id in get_page_descendant_ids(page_id):
@@ -310,6 +321,37 @@ class PageViewSet(BaseViewSet):
                     project_id=project_id,
                 )
             return Response(data, status=status.HTTP_200_OK)
+
+    def permissions(self, request, slug, project_id, page_id):
+        """Effective permissions; used by the real-time server before opening a connection.
+
+        ProjectPagePermission has already rejected non-members and private pages of others.
+        The edit rule mirrors the web app's ProjectPage.isContentEditable.
+        """
+        page = self.get_queryset().filter(pk=page_id).first()
+        if page is None:
+            return Response({"error": "Page not found"}, status=status.HTTP_404_NOT_FOUND)
+        role = (
+            ProjectMember.objects.filter(project_id=project_id, member=request.user, is_active=True)
+            .values_list("role", flat=True)
+            .first()
+        )
+        is_owner = page.owned_by_id == request.user.id
+        is_public = page.access == Page.PUBLIC_ACCESS
+        can_view = is_owner or is_public
+        # same guest rule as retrieve(): guests only see others' pages if the project allows it
+        if role == ROLE.GUEST.value and not is_owner:
+            can_view = can_view and Project.objects.filter(pk=project_id, guest_view_all_features=True).exists()
+        can_edit = can_view and (is_owner or (is_public and role is not None and role >= ROLE.MEMBER.value))
+        return Response(
+            {
+                "can_view": can_view,
+                "can_edit": can_edit,
+                "can_manage": is_owner or role == ROLE.ADMIN.value,
+                "can_edit_content": can_edit and not page.is_locked and not page.archived_at,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def lock(self, request, slug, project_id, page_id):
         page = Page.objects.get(

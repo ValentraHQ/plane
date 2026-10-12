@@ -174,6 +174,13 @@ from .page.base import (
     PageDuplicateEndpoint,
 )
 from .page.version import PageVersionEndpoint
+from .page.workspace import (
+    WorkspacePageViewSet,
+    WorkspacePagesDescriptionViewSet,
+    WorkspacePageVersionEndpoint,
+    WikiSpacePageTreeEndpoint,
+)
+from .page.space import WikiSpaceViewSet, WikiSpaceMemberViewSet
 
 from .search.base import GlobalSearchEndpoint, SearchEndpoint
 from .search.issue import IssueSearchEndpoint

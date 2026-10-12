@@ -49,6 +49,14 @@ class Page(BaseModel):
     view_props = models.JSONField(default=get_view_props)
     logo_props = models.JSONField(default=dict)
     is_global = models.BooleanField(default=False)
+    # workspace wiki pages (is_global) belong to a documentation space; project pages never do
+    space = models.ForeignKey(
+        "db.WikiSpace",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="pages",
+    )
     projects = models.ManyToManyField("db.Project", related_name="pages", through="db.ProjectPage")
     moved_to_page = models.UUIDField(null=True, blank=True)
     moved_to_project = models.UUIDField(null=True, blank=True)

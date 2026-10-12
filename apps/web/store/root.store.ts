@@ -56,6 +56,10 @@ import type { IWorkspaceNotificationStore } from "./notifications/workspace-noti
 import { WorkspaceNotificationStore } from "./notifications/workspace-notifications.store";
 import type { IProjectPageStore } from "./pages/project-page.store";
 import { ProjectPageStore } from "./pages/project-page.store";
+import type { IWorkspacePageStore } from "./pages/workspace-page.store";
+import { WorkspacePageStore } from "./pages/workspace-page.store";
+import type { IWikiSpaceStore } from "./pages/wiki-space.store";
+import { WikiSpaceStore } from "./pages/wiki-space.store";
 import type { IProjectRootStore } from "./project";
 import { ProjectRootStore } from "./project";
 import type { IProjectViewStore } from "./project-view.store";
@@ -88,6 +92,8 @@ export class CoreRootStore {
   dashboard: IDashboardStore;
   analytics: IAnalyticsStore;
   projectPages: IProjectPageStore;
+  workspacePages: IWorkspacePageStore;
+  wikiSpaces: IWikiSpaceStore;
   router: IRouterStore;
   commandPalette: ICommandPaletteStore;
   theme: IThemeStore;
@@ -126,6 +132,8 @@ export class CoreRootStore {
     this.multipleSelect = new MultipleSelectStore();
     this.projectInbox = new ProjectInboxStore(this);
     this.projectPages = new ProjectPageStore(this);
+    this.workspacePages = new WorkspacePageStore(this);
+    this.wikiSpaces = new WikiSpaceStore(this);
     this.projectEstimate = new ProjectEstimateStore(this);
     this.workspaceNotification = new WorkspaceNotificationStore(this);
     this.favorite = new FavoriteStore(this);
@@ -160,6 +168,8 @@ export class CoreRootStore {
     this.dashboard = new DashboardStore(this);
     this.projectInbox = new ProjectInboxStore(this);
     this.projectPages = new ProjectPageStore(this);
+    this.workspacePages = new WorkspacePageStore(this);
+    this.wikiSpaces = new WikiSpaceStore(this);
     this.multipleSelect = new MultipleSelectStore();
     this.projectEstimate = new ProjectEstimateStore(this);
     this.workspaceNotification = new WorkspaceNotificationStore(this);

@@ -48,8 +48,9 @@ export const PageListBlock = observer(function PageListBlock(props: TPageListBlo
 
   // re-fetch on every expand so archive/restore cascades from the server are reflected
   useEffect(() => {
-    if (!isExpanded || !workspaceSlug || !projectId) return;
-    fetchSubPages(workspaceSlug.toString(), projectId.toString(), pageId).catch(() => {
+    // projectId is absent in the workspace wiki; the wiki store does not need it
+    if (!isExpanded || !workspaceSlug) return;
+    fetchSubPages(workspaceSlug.toString(), projectId?.toString() ?? "", pageId).catch(() => {
       setToast({ type: "error", title: "Error!", message: "Sub-pages could not be loaded. Please try again." });
       setIsExpanded(false);
     });
