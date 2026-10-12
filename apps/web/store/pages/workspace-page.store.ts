@@ -8,7 +8,6 @@ import { unset, set } from "lodash-es";
 import { makeObservable, observable, runInAction, action, computed } from "mobx";
 import { computedFn } from "mobx-utils";
 // types
-import { EUserPermissions } from "@plane/constants";
 import type { TPage, TPageFilters, TPageNavigationTabs } from "@plane/types";
 // helpers
 import { filterPagesByPageType, getPageName, orderPages, shouldFilterPage } from "@plane/utils";
@@ -17,6 +16,7 @@ import { WorkspacePageService } from "@/services/page";
 // store
 import type { CoreRootStore } from "../root.store";
 import type { IProjectPageStore } from "./project-page.store";
+import { canWriteInSpace } from "./wiki-space.store";
 import type { TWorkspacePage } from "./workspace-page";
 import { WorkspacePage } from "./workspace-page";
 
@@ -29,7 +29,10 @@ type TError = { title: string; description: string };
  * shared page list, block and action components work with either; the projectId arguments of that
  * interface are ignored here because wiki pages belong to the workspace.
  */
-export type IWorkspacePageStore = IProjectPageStore;
+export interface IWorkspacePageStore extends IProjectPageStore {
+  /** merge pages (full or tree nodes) into the store */
+  upsertPages: (pages: TPage[]) => void;
+}
 
 export class WorkspacePageStore implements IWorkspacePageStore {
   // observables
@@ -61,6 +64,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
       fetchPagesList: action,
       fetchPageDetails: action,
       fetchSubPages: action,
+      upsertPages: action,
       createPage: action,
       removePage: action,
       movePage: action,
@@ -77,15 +81,10 @@ export class WorkspacePageStore implements IWorkspacePageStore {
   }
 
   /**
-   * @description workspace admins and members can write in the wiki; guests cannot
+   * @description editors and admins of the current space can create pages in it
    */
   get canCurrentUserCreatePage() {
-    const { workspaceSlug } = this.store.router;
-    if (!workspaceSlug) return false;
-    const role = this.store.user.permission.getWorkspaceRoleByWorkspaceSlug(workspaceSlug.toString()) as
-      | number
-      | undefined;
-    return !!role && role >= EUserPermissions.MEMBER;
+    return canWriteInSpace(this.store.wikiSpaces.currentSpace?.my_role);
   }
 
   private get pagesInWorkspace() {
@@ -93,7 +92,11 @@ export class WorkspacePageStore implements IWorkspacePageStore {
     if (!workspaceSlug) return [];
     // pages are loaded per workspace; drop any left from another workspace
     const workspaceId = this.store.workspaceRoot.getWorkspaceBySlug(workspaceSlug.toString())?.id;
-    return Object.values(this.data).filter((p) => !workspaceId || p.workspace === workspaceId);
+    // lists show the current space only
+    const spaceId = this.store.wikiSpaces.currentSpaceId;
+    return Object.values(this.data).filter(
+      (p) => (!workspaceId || p.workspace === workspaceId) && (!spaceId || p.space === spaceId)
+    );
   }
 
   getCurrentProjectPageIdsByTab = computedFn((pageType: TPageNavigationTabs) => {
@@ -142,7 +145,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
       set(this.filters, ["filters"], {});
     });
 
-  private mergePages(pages: TPage[]) {
+  upsertPages = (pages: TPage[]) => {
     for (const page of pages) {
       if (!page?.id) continue;
       const existingPage = this.getPageById(page.id);
@@ -153,7 +156,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
         set(this.data, [page.id], new WorkspacePage(this.store, page));
       }
     }
-  }
+  };
 
   /**
    * @description fetch the top-level wiki pages
@@ -166,9 +169,10 @@ export class WorkspacePageStore implements IWorkspacePageStore {
         this.loader = currentPageIds && currentPageIds.length > 0 ? "mutation-loader" : "init-loader";
         this.error = undefined;
       });
-      const pages = await this.service.fetchAll(workspaceSlug);
+      const spaceId = this.store.wikiSpaces.currentSpaceId;
+      const pages = await this.service.fetchAll(workspaceSlug, spaceId ? { space_id: spaceId } : undefined);
       runInAction(() => {
-        this.mergePages(pages);
+        this.upsertPages(pages);
         this.loader = undefined;
       });
       return pages;
@@ -187,7 +191,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
       if (!workspaceSlug || !pageId) return undefined;
       const page = await this.service.fetchById(workspaceSlug, pageId);
       runInAction(() => {
-        this.mergePages([page]);
+        this.upsertPages([page]);
         // a single-page load should not leave the list in its initial loading state
         if (this.loader === "init-loader" && Object.keys(this.data).length > 0) this.loader = undefined;
       });
@@ -207,7 +211,7 @@ export class WorkspacePageStore implements IWorkspacePageStore {
     if (!workspaceSlug || !parentId) return undefined;
     const pages = await this.service.fetchAll(workspaceSlug, { parent_id: parentId });
     runInAction(() => {
-      this.mergePages(pages);
+      this.upsertPages(pages);
       const parent = this.getPageById(parentId);
       if (parent) parent.mutateProperties({ sub_pages_count: pages.filter((p) => !p.archived_at).length }, false);
     });
@@ -222,7 +226,10 @@ export class WorkspacePageStore implements IWorkspacePageStore {
         this.loader = "mutation-loader";
         this.error = undefined;
       });
-      const page = await this.service.create(workspaceSlug.toString(), pageData);
+      // a top-level page goes into the current space; a sub-page inherits its parent's space
+      const payload =
+        pageData.parent || pageData.space ? pageData : { ...pageData, space: this.store.wikiSpaces.currentSpaceId };
+      const page = await this.service.create(workspaceSlug.toString(), payload);
       runInAction(() => {
         if (page?.id) set(this.data, [page.id], new WorkspacePage(this.store, page));
         const parent = page?.parent ? this.getPageById(page.parent) : undefined;

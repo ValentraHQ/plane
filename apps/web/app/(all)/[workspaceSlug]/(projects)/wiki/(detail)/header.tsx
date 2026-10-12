@@ -17,8 +17,10 @@ import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
 import { SwitcherIcon } from "@/components/common/switcher-label";
 import { PageHeaderActions } from "@/components/pages/header/actions";
 import { PageSyncingBadge } from "@/components/pages/header/syncing-badge";
+import { WikiSpaceIcon } from "@/components/wiki/space-switcher";
 // hooks
 import { EPageStoreType, usePage, usePageStore } from "@/hooks/store";
+import { useWikiSpaces } from "@/hooks/store/use-wiki-spaces";
 
 const storeType = EPageStoreType.WORKSPACE;
 // guards the ancestor walk against unexpectedly deep or cyclic data
@@ -29,6 +31,7 @@ export const WikiPageDetailsHeader = observer(function WikiPageDetailsHeader() {
   const { workspaceSlug, pageId } = useParams();
   // store hooks
   const { getPageById, fetchPageDetails } = usePageStore(storeType);
+  const { getSpaceById } = useWikiSpaces();
   const page = usePage({
     pageId: pageId?.toString() ?? "",
     storeType,
@@ -54,6 +57,7 @@ export const WikiPageDetailsHeader = observer(function WikiPageDetailsHeader() {
   }, [missingAncestorId, workspaceSlug, fetchPageDetails]);
 
   if (!page) return null;
+  const space = getSpaceById(page.space);
 
   return (
     <Header>
@@ -69,6 +73,17 @@ export const WikiPageDetailsHeader = observer(function WikiPageDetailsHeader() {
                 />
               }
             />
+            {space && (
+              <Breadcrumbs.Item
+                component={
+                  <BreadcrumbLink
+                    label={space.name}
+                    href={`/${workspaceSlug}/wiki/spaces/${space.id}`}
+                    icon={<WikiSpaceIcon logo_props={space.logo_props} />}
+                  />
+                }
+              />
+            )}
             {ancestors.map((ancestor) => (
               <Breadcrumbs.Item
                 key={ancestor.id}

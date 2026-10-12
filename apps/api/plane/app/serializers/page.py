@@ -45,6 +45,7 @@ class PageSerializer(BaseSerializer):
             "labels",
             "parent",
             "space",
+            "sort_order",
             "sub_pages_count",
             "is_favorite",
             "is_locked",
@@ -60,7 +61,7 @@ class PageSerializer(BaseSerializer):
             "project_ids",
         ]
         # space is set on wiki pages through create/move, never by a plain update
-        read_only_fields = ["workspace", "owned_by", "space"]
+        read_only_fields = ["workspace", "owned_by", "space", "sort_order"]
 
     def create(self, validated_data):
         labels = validated_data.pop("labels", None)

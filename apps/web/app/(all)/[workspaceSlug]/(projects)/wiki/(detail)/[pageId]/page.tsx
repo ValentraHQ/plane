@@ -17,12 +17,14 @@ import { LogoSpinner } from "@/components/common/logo-spinner";
 import { PageHead } from "@/components/core/page-title";
 import type { TPageRootConfig, TPageRootHandlers } from "@/components/pages/editor/page-root";
 import { PageRoot } from "@/components/pages/editor/page-root";
+import { WikiShell } from "@/components/wiki/shell";
 // hooks
 import { useEditorConfig } from "@/hooks/editor";
 import { useEditorAsset } from "@/hooks/store/use-editor-asset";
 import { useWorkspace } from "@/hooks/store/use-workspace";
 import { useAppRouter } from "@/hooks/use-app-router";
 import { EPageStoreType, usePage, usePageStore } from "@/hooks/store";
+import { useWikiSpaces } from "@/hooks/store/use-wiki-spaces";
 // services
 import { WorkspaceService } from "@/services/workspace.service";
 import { WorkspacePageService } from "@/services/page";
@@ -43,6 +45,9 @@ function WikiPageDetailsPage({ params }: Route.ComponentProps) {
     storeType,
   });
   const { getWorkspaceBySlug } = useWorkspace();
+  const { fetchSpaces } = useWikiSpaces();
+  // the user's space roles decide what they may edit on this page
+  useSWR(workspaceSlug ? `WIKI_SPACES_${workspaceSlug}` : null, () => fetchSpaces(workspaceSlug));
   const { uploadEditorAsset, duplicateEditorAsset } = useEditorAsset();
   // derived values
   const workspaceId = workspaceSlug ? (getWorkspaceBySlug(workspaceSlug)?.id ?? "") : "";
@@ -161,18 +166,20 @@ function WikiPageDetailsPage({ params }: Route.ComponentProps) {
   return (
     <>
       <PageHead title={name} />
-      <div className="flex h-full flex-col justify-between">
-        <div className="relative flex h-full w-full flex-shrink-0 flex-col overflow-hidden">
-          <PageRoot
-            config={pageRootConfig}
-            handlers={pageRootHandlers}
-            storeType={storeType}
-            page={page}
-            webhookConnectionParams={webhookConnectionParams}
-            workspaceSlug={workspaceSlug}
-          />
+      <WikiShell workspaceSlug={workspaceSlug} spaceId={page.space ?? ""} activePageId={page.id}>
+        <div className="flex h-full flex-col justify-between">
+          <div className="relative flex h-full w-full flex-shrink-0 flex-col overflow-hidden">
+            <PageRoot
+              config={pageRootConfig}
+              handlers={pageRootHandlers}
+              storeType={storeType}
+              page={page}
+              webhookConnectionParams={webhookConnectionParams}
+              workspaceSlug={workspaceSlug}
+            />
+          </div>
         </div>
-      </div>
+      </WikiShell>
     </>
   );
 }

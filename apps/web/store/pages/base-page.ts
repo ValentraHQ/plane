@@ -98,6 +98,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
   workspace: string | undefined;
   parent: string | null | undefined;
   sub_pages_count: number | undefined;
+  space: string | null | undefined;
+  sort_order: number | undefined;
   project_ids?: string[] | undefined;
   created_by: string | undefined;
   updated_by: string | undefined;
@@ -137,6 +139,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
     this.workspace = page?.workspace || undefined;
     this.parent = page?.parent || null;
     this.sub_pages_count = page?.sub_pages_count;
+    this.space = page?.space ?? null;
+    this.sort_order = page?.sort_order;
     this.project_ids = page?.project_ids || undefined;
     this.created_by = page?.created_by || undefined;
     this.updated_by = page?.updated_by || undefined;
@@ -164,6 +168,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       workspace: observable.ref,
       parent: observable.ref,
       sub_pages_count: observable.ref,
+      space: observable.ref,
+      sort_order: observable.ref,
       project_ids: observable,
       created_by: observable.ref,
       updated_by: observable.ref,
@@ -242,6 +248,8 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       workspace: this.workspace,
       parent: this.parent,
       sub_pages_count: this.sub_pages_count,
+      space: this.space,
+      sort_order: this.sort_order,
       project_ids: this.project_ids,
       created_by: this.created_by,
       updated_by: this.updated_by,

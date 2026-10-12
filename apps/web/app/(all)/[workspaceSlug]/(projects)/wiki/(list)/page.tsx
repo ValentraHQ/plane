@@ -4,94 +4,93 @@
  * See the LICENSE file for details.
  */
 
+import { useEffect } from "react";
 import { observer } from "mobx-react";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import useSWR from "swr";
 // plane imports
-import { useTranslation } from "@plane/i18n";
 import { EmptyStateDetailed } from "@plane/blocks/empty-state";
-import type { TPageNavigationTabs } from "@plane/types";
+import { GlobeOutline, LockOutline } from "@makeplane/propel/icons";
+import { EWikiSpaceAccess, EWikiSpaceRole } from "@plane/types";
 // components
+import { LogoSpinner } from "@/components/common/logo-spinner";
 import { PageHead } from "@/components/core/page-title";
-import { PagesListHeaderRoot } from "@/components/pages/header";
-import { PagesListRoot } from "@/components/pages/list/root";
-import { PageLoader } from "@/components/pages/loaders/page-loader";
+import { WikiSpaceIcon } from "@/components/wiki/space-switcher";
 // hooks
-import { EPageStoreType, usePageStore } from "@/hooks/store";
+import { useWikiSpaces } from "@/hooks/store/use-wiki-spaces";
 import type { Route } from "./+types/page";
 
-const storeType = EPageStoreType.WORKSPACE;
-
-const getPageType = (pageType?: string | null): TPageNavigationTabs => {
-  if (pageType === "private") return "private";
-  if (pageType === "archived") return "archived";
-  return "public";
+const ROLE_LABELS: Record<number, string> = {
+  [EWikiSpaceRole.ADMIN]: "Admin",
+  [EWikiSpaceRole.EDITOR]: "Editor",
+  [EWikiSpaceRole.VIEWER]: "Viewer",
 };
 
-function WikiPagesPage({ params }: Route.ComponentProps) {
+/** Directory of documentation spaces the user can see. */
+function WikiSpacesPage({ params }: Route.ComponentProps) {
   const { workspaceSlug } = params;
-  const searchParams = useSearchParams();
-  const pageType = getPageType(searchParams.get("type"));
-  // plane hooks
-  const { t } = useTranslation();
-  // store hooks
-  const {
-    fetchPagesList,
-    isAnyPageAvailable,
-    loader,
-    getCurrentProjectPageIdsByTab,
-    getCurrentProjectFilteredPageIdsByTab,
-  } = usePageStore(storeType);
-  // fetch the top-level wiki pages
-  useSWR(workspaceSlug ? `WIKI_PAGES_${workspaceSlug}` : null, () => fetchPagesList(workspaceSlug, ""));
-  // derived values
-  const pageIds = getCurrentProjectPageIdsByTab(pageType);
-  const filteredPageIds = getCurrentProjectFilteredPageIdsByTab(pageType);
+  const { spaceIds, getSpaceById, fetchSpaces, setCurrentSpace } = useWikiSpaces();
+  const { isLoading } = useSWR(workspaceSlug ? `WIKI_SPACES_${workspaceSlug}` : null, () => fetchSpaces(workspaceSlug));
 
-  const renderContent = () => {
-    if (loader === "init-loader") return <PageLoader />;
-    if (pageIds?.length === 0)
-      return (
-        <EmptyStateDetailed
-          assetKey="page"
-          title={
-            pageType === "archived"
-              ? t("project_empty_state.archive_pages.title")
-              : t("workspace_empty_state.wiki.title")
-          }
-          description={
-            pageType === "archived"
-              ? t("project_empty_state.archive_pages.description")
-              : "Wiki pages belong to the whole workspace, not to a project. Use Add page to start, and Add sub-page to build the tree."
-          }
-        />
-      );
-    if (filteredPageIds?.length === 0)
-      return (
-        <EmptyStateDetailed
-          assetKey="search"
-          title={t("common_empty_state.search.title")}
-          description={t("common_empty_state.search.description")}
-        />
-      );
-    return (
-      <div className="h-full w-full overflow-hidden">
-        <PagesListRoot pageType={pageType} storeType={storeType} />
-      </div>
-    );
-  };
+  // the directory is not inside any space
+  useEffect(() => setCurrentSpace(undefined), [setCurrentSpace]);
 
   return (
     <>
       <PageHead title="Wiki" />
-      <div className="relative flex h-full w-full flex-col overflow-hidden">
-        {isAnyPageAvailable && (
-          <PagesListHeaderRoot pageType={pageType} projectId="" storeType={storeType} workspaceSlug={workspaceSlug} />
+      <div className="h-full w-full overflow-y-auto">
+        {isLoading && spaceIds.length === 0 ? (
+          <div className="grid h-full place-items-center">
+            <LogoSpinner />
+          </div>
+        ) : spaceIds.length === 0 ? (
+          <EmptyStateDetailed
+            assetKey="page"
+            title="Create your first documentation space"
+            description="Spaces group related documentation — for a team, product or topic — with their own page tree and access."
+          />
+        ) : (
+          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-6 lg:grid-cols-3">
+            {spaceIds.map((spaceId) => {
+              const space = getSpaceById(spaceId);
+              if (!space) return null;
+              const isRestricted = space.access === EWikiSpaceAccess.RESTRICTED;
+              return (
+                <Link
+                  key={space.id}
+                  href={`/${workspaceSlug}/wiki/spaces/${space.id}`}
+                  className="flex flex-col gap-3 rounded-lg border border-subtle bg-surface-1 p-4 transition-colors hover:border-strong hover:bg-layer-transparent-hover"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="grid size-8 flex-shrink-0 place-items-center rounded-md bg-layer-2">
+                      <WikiSpaceIcon logo_props={space.logo_props} size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-14 font-medium text-primary">{space.name}</p>
+                      <p className="text-12 text-tertiary">{space.identifier}</p>
+                    </div>
+                  </div>
+                  <p className="line-clamp-2 min-h-8 text-13 text-secondary">
+                    {space.description || "No description yet."}
+                  </p>
+                  <div className="mt-auto flex items-center gap-3 text-12 text-tertiary">
+                    <span>
+                      {space.page_count} {space.page_count === 1 ? "page" : "pages"}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      {isRestricted ? <LockOutline className="size-3" /> : <GlobeOutline className="size-3" />}
+                      {isRestricted ? "Restricted" : "Open"}
+                    </span>
+                    {space.my_role && <span className="ml-auto">{ROLE_LABELS[space.my_role]}</span>}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         )}
-        {renderContent()}
       </div>
     </>
   );
 }
 
-export default observer(WikiPagesPage);
+export default observer(WikiSpacesPage);

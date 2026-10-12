@@ -23,6 +23,9 @@ export type TPage = {
   name: string | undefined;
   owned_by: string | undefined;
   parent?: string | null;
+  /** documentation space of a workspace wiki page; null for project pages */
+  space?: string | null;
+  sort_order?: number;
   project_ids?: string[] | undefined;
   sub_pages_count?: number;
   updated_at: Date | undefined;
