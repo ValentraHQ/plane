@@ -45,7 +45,7 @@ type Props = {
   onTurn: (direction: "next" | "previous") => void;
 };
 
-const THEMES = {
+export const THEMES = {
   light: { bg: "#ffffff", fg: "#1f2328", link: "#0b63c4" },
   dark: { bg: "#16181d", fg: "#e3e5e8", link: "#79b8ff" },
   sepia: { bg: "#f4ecd8", fg: "#4a3b2a", link: "#7a4b12" },

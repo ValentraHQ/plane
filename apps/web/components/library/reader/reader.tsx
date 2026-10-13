@@ -29,13 +29,14 @@ import type {
 import { EBookReadingStatus, EBookStatus } from "@plane/types";
 import { cn } from "@plane/utils";
 // hooks
+import { useAppTheme } from "@/hooks/store/use-app-theme";
 import { useLibrary } from "@/hooks/store/use-library";
 import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { bookTitle } from "../utils";
 import type { TReaderFrameHandle } from "./reader-frame";
-import { ReaderFrame } from "./reader-frame";
+import { ReaderFrame, THEMES } from "./reader-frame";
 import { SearchPanel, SettingsPanel, TocPanel } from "./reader-panels";
 
 const service = new LibraryService();
@@ -67,6 +68,7 @@ type Props = { workspaceSlug: string; bookId: string };
 
 export const BookReader = observer(function BookReader({ workspaceSlug, bookId }: Props) {
   const { getBookById, fetchBook } = useLibrary();
+  const { toggleSidebar } = useAppTheme();
   const book = getBookById(bookId);
   const frame = useRef<TReaderFrameHandle>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -134,6 +136,11 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [chapter?.index, fetchChapter]
   );
+
+  // on a phone the book needs the whole width: close the app sidebar
+  useEffect(() => {
+    if (window.innerWidth < 768) toggleSidebar(true);
+  }, [toggleSidebar]);
 
   useEffect(() => {
     setSystemDark(isDarkApp());
@@ -326,6 +333,11 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
     );
   }
 
+  const pageTheme =
+    preferences.theme === "system"
+      ? THEMES[systemDark ? "dark" : "light"]
+      : (THEMES[preferences.theme] ?? THEMES.light);
+
   const chapterTitle =
     chapter?.title ||
     chapters.find((c) => c.index === chapter?.index)?.title ||
@@ -380,13 +392,17 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
         </button>
       </header>
 
-      <div className="relative flex min-h-0 flex-1">
+      <div
+        className="relative flex min-h-0 flex-1"
+        // the margins around the page take the page's colour
+        style={{ background: pageTheme.bg, color: pageTheme.fg }}
+      >
         {/* the page, with turn buttons on wide screens */}
         <button
           type="button"
           aria-label="Previous page"
           onClick={previous}
-          className="hidden w-12 shrink-0 items-center justify-center text-tertiary hover:bg-layer-transparent-hover md:flex"
+          className="hidden w-12 shrink-0 items-center justify-center opacity-50 hover:opacity-100 md:flex"
         >
           <ChevronLeftOutline className="size-5" />
         </button>
@@ -416,7 +432,7 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
           type="button"
           aria-label="Next page"
           onClick={next}
-          className="hidden w-12 shrink-0 items-center justify-center text-tertiary hover:bg-layer-transparent-hover md:flex"
+          className="hidden w-12 shrink-0 items-center justify-center opacity-50 hover:opacity-100 md:flex"
         >
           <ChevronRightOutline className="size-5" />
         </button>
