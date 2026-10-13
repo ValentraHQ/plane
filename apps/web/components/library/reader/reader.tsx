@@ -198,9 +198,12 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
     const isEnd = chapter.next === null && where.fraction >= 1;
     setProgress(isEnd ? 100 : value);
     setPageInfo(frame.current.pageInfo());
+    // a status change waiting to be saved must survive later moves
+    const pendingStatus = pendingSave.current?.status;
     pendingSave.current = {
       position: { chapter: chapter.index, offset: where.offset, quote: where.quote },
       progress: isEnd ? 100 : Math.round(value * 100) / 100,
+      ...(pendingStatus !== undefined ? { status: pendingStatus } : {}),
       ...(isEnd && !finished.current ? { status: EBookReadingStatus.COMPLETED } : {}),
     };
     if (isEnd && !finished.current) {

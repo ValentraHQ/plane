@@ -50,61 +50,53 @@ export const LibraryToolbar = observer(function LibraryToolbar() {
           className="h-8 w-full rounded-md border border-subtle bg-surface-1 pr-2 pl-8 text-13 text-primary placeholder:text-placeholder focus:outline-2 focus:outline-accent-strong"
         />
       </label>
-      <label className="flex items-center gap-1">
-        <span className="sr-only">Format</span>
-        <select
-          className={selectClass}
-          value={filters.format ?? ""}
-          onChange={(e) => setFilters({ format: (e.target.value || null) as TBookFormat | null })}
-        >
-          <option value="">All formats</option>
-          <option value="epub">EPUB</option>
-          <option value="pdf">PDF</option>
-        </select>
-      </label>
-      <label className="flex items-center gap-1">
-        <span className="sr-only">Tag</span>
-        <select
-          className={selectClass}
-          value={filters.tag ?? ""}
-          onChange={(e) => setFilters({ tag: e.target.value || null })}
-          disabled={tags.length === 0 && !filters.tag}
-        >
-          <option value="">All tags</option>
-          {tags.map((tag) => (
-            <option key={tag.name} value={tag.name}>
-              {tag.name} ({tag.count})
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex items-center gap-1">
-        <span className="sr-only">Reading</span>
-        <select
-          className={selectClass}
-          value={filters.reading ?? ""}
-          onChange={(e) => setFilters({ reading: (e.target.value || null) as TBookFilters["reading"] })}
-        >
-          <option value="">Any progress</option>
-          <option value="unread">Not started</option>
-          <option value="reading">Reading</option>
-          <option value="completed">Finished</option>
-        </select>
-      </label>
-      <label className="flex items-center gap-1">
-        <span className="sr-only">Sort by</span>
-        <select
-          className={selectClass}
-          value={filters.order_by}
-          onChange={(e) => setFilters({ order_by: e.target.value as TBookOrderBy })}
-        >
-          {SORT_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <select
+        aria-label="Format"
+        className={selectClass}
+        value={filters.format ?? ""}
+        onChange={(e) => setFilters({ format: (e.target.value || null) as TBookFormat | null })}
+      >
+        <option value="">All formats</option>
+        <option value="epub">EPUB</option>
+        <option value="pdf">PDF</option>
+      </select>
+      <select
+        aria-label="Tag"
+        className={selectClass}
+        value={filters.tag ?? ""}
+        onChange={(e) => setFilters({ tag: e.target.value || null })}
+        disabled={tags.length === 0 && !filters.tag}
+      >
+        <option value="">All tags</option>
+        {tags.map((tag) => (
+          <option key={tag.name} value={tag.name}>
+            {tag.name} ({tag.count})
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Reading"
+        className={selectClass}
+        value={filters.reading ?? ""}
+        onChange={(e) => setFilters({ reading: (e.target.value || null) as TBookFilters["reading"] })}
+      >
+        <option value="">Any progress</option>
+        <option value="unread">Not started</option>
+        <option value="reading">Reading</option>
+        <option value="completed">Finished</option>
+      </select>
+      <select
+        aria-label="Sort by"
+        className={selectClass}
+        value={filters.order_by}
+        onChange={(e) => setFilters({ order_by: e.target.value as TBookOrderBy })}
+      >
+        {SORT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
       {!isLoading && (
         <span className="ml-auto text-12 text-tertiary" aria-live="polite">
           {count} {count === 1 ? "book" : "books"}
