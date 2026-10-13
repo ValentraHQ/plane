@@ -289,13 +289,17 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
 
   // --- settings ---
   const prefsTimer = useRef<number | undefined>(undefined);
+  // changes made in quick succession are saved together
+  const pendingPrefs = useRef<Partial<TReaderPreferences>>({});
   const changePreferences = (change: Partial<TReaderPreferences>) => {
     setPreferences((current) => ({ ...current, ...change }));
+    pendingPrefs.current = { ...pendingPrefs.current, ...change };
     window.clearTimeout(prefsTimer.current);
-    prefsTimer.current = window.setTimeout(
-      () => void service.saveReaderPreferences(workspaceSlug, change).catch(() => undefined),
-      600
-    );
+    prefsTimer.current = window.setTimeout(() => {
+      const changes = pendingPrefs.current;
+      pendingPrefs.current = {};
+      void service.saveReaderPreferences(workspaceSlug, changes).catch(() => undefined);
+    }, 600);
   };
 
   const toggleFullscreen = () => {
