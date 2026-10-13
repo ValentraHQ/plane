@@ -59,6 +59,9 @@ export type TWikiTreeNode = {
   is_locked: boolean;
   owned_by: string;
   space: string;
+  /** the page has its own view / edit restrictions (inherited ones are not flagged) */
+  view_restricted: boolean;
+  edit_restricted: boolean;
 };
 
 export type TWikiPageMovePayload = {

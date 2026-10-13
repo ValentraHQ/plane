@@ -19,6 +19,8 @@ export interface IWikiSpaceStore {
   // observables
   spaces: Record<string, TWikiSpace>;
   members: Record<string, TWikiSpaceMember[]>;
+  /** pages (from the tree) that have their own view / edit restrictions */
+  restrictionFlags: Record<string, { view: boolean; edit: boolean }>;
   isLoading: boolean;
   currentSpaceId: string | undefined;
   // computed
@@ -57,6 +59,7 @@ const pageService = new WorkspacePageService();
 export class WikiSpaceStore implements IWikiSpaceStore {
   spaces: Record<string, TWikiSpace> = {};
   members: Record<string, TWikiSpaceMember[]> = {};
+  restrictionFlags: Record<string, { view: boolean; edit: boolean }> = {};
   isLoading = false;
   currentSpaceId: string | undefined = undefined;
 
@@ -64,6 +67,7 @@ export class WikiSpaceStore implements IWikiSpaceStore {
     makeObservable(this, {
       spaces: observable,
       members: observable,
+      restrictionFlags: observable,
       isLoading: observable.ref,
       currentSpaceId: observable.ref,
       spaceIds: computed,
@@ -164,6 +168,9 @@ export class WikiSpaceStore implements IWikiSpaceStore {
     runInAction(() => {
       // the tree endpoint returns lightweight pages; merge them into the shared page store
       this.store.workspacePages.upsertPages(nodes as unknown as TPage[]);
+      for (const node of nodes) {
+        set(this.restrictionFlags, [node.id], { view: node.view_restricted, edit: node.edit_restricted });
+      }
     });
   };
 

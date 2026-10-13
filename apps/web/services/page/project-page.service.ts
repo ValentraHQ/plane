@@ -6,7 +6,7 @@
 
 // types
 import { API_BASE_URL } from "@plane/constants";
-import type { TDocumentPayload, TPage } from "@plane/types";
+import type { TDocumentPayload, TPage, TPageRestrictions, TPageRestrictionsPayload } from "@plane/types";
 // helpers
 // services
 import { APIService } from "@/services/api.service";
@@ -179,6 +179,27 @@ export class ProjectPageService extends APIService {
 
   async duplicate(workspaceSlug: string, projectId: string, pageId: string): Promise<TPage> {
     return this.post(`/api/workspaces/${workspaceSlug}/projects/${projectId}/pages/${pageId}/duplicate/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async fetchRestrictions(workspaceSlug: string, projectId: string, pageId: string): Promise<TPageRestrictions> {
+    return this.get(`/api/workspaces/${workspaceSlug}/projects/${projectId}/pages/${pageId}/restrictions/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async updateRestrictions(
+    workspaceSlug: string,
+    projectId: string,
+    pageId: string,
+    payload: TPageRestrictionsPayload
+  ): Promise<TPageRestrictions> {
+    return this.put(`/api/workspaces/${workspaceSlug}/projects/${projectId}/pages/${pageId}/restrictions/`, payload)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

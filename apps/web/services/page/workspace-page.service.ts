@@ -6,7 +6,14 @@
 
 // types
 import { API_BASE_URL } from "@plane/constants";
-import type { TDocumentPayload, TPage, TPageVersion, TWikiPageMovePayload } from "@plane/types";
+import type {
+  TDocumentPayload,
+  TPage,
+  TPageRestrictions,
+  TPageRestrictionsPayload,
+  TPageVersion,
+  TWikiPageMovePayload,
+} from "@plane/types";
 // services
 import { APIService } from "@/services/api.service";
 
@@ -143,6 +150,26 @@ export class WorkspacePageService extends APIService {
     pageId: string
   ): Promise<{ can_view: boolean; can_edit: boolean; can_manage: boolean; can_edit_content: boolean }> {
     return this.get(`${this.pagesPath(workspaceSlug, pageId)}permissions/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async fetchRestrictions(workspaceSlug: string, pageId: string): Promise<TPageRestrictions> {
+    return this.get(`${this.pagesPath(workspaceSlug, pageId)}restrictions/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async updateRestrictions(
+    workspaceSlug: string,
+    pageId: string,
+    payload: TPageRestrictionsPayload
+  ): Promise<TPageRestrictions> {
+    return this.put(`${this.pagesPath(workspaceSlug, pageId)}restrictions/`, payload)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response?.data;

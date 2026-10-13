@@ -59,6 +59,14 @@ export class ProjectPage extends BasePage implements TProjectPage {
         if (!workspaceSlug || !projectId || !page.id) throw new Error("Missing required fields.");
         return await projectPageService.duplicate(workspaceSlug, projectId, page.id);
       },
+      fetchRestrictions: async () => {
+        if (!workspaceSlug || !projectId || !page.id) throw new Error("Missing required fields.");
+        return await projectPageService.fetchRestrictions(workspaceSlug, projectId, page.id);
+      },
+      updateRestrictions: async (payload) => {
+        if (!workspaceSlug || !projectId || !page.id) throw new Error("Missing required fields.");
+        return await projectPageService.updateRestrictions(workspaceSlug, projectId, page.id, payload);
+      },
     });
     makeObservable(this, {
       // computed
@@ -71,6 +79,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
       canCurrentUserDeletePage: computed,
       canCurrentUserFavoritePage: computed,
       canCurrentUserMovePage: computed,
+      canCurrentUserChangeRestrictions: computed,
       isContentEditable: computed,
     });
   }
@@ -97,7 +106,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserAccessPage() {
     const isPagePublic = this.access === EPageAccess.PUBLIC;
-    return isPagePublic || this.isCurrentUserOwner;
+    return (isPagePublic || this.isCurrentUserOwner) && this.serverAllows("can_view");
   }
 
   /**
@@ -107,8 +116,9 @@ export class ProjectPage extends BasePage implements TProjectPage {
     const highestRole = this.getHighestRoleAcrossProjects();
     const isPagePublic = this.access === EPageAccess.PUBLIC;
     return (
-      (isPagePublic && !!highestRole && highestRole >= EUserPermissions.MEMBER) ||
-      (!isPagePublic && this.isCurrentUserOwner)
+      ((isPagePublic && !!highestRole && highestRole >= EUserPermissions.MEMBER) ||
+        (!isPagePublic && this.isCurrentUserOwner)) &&
+      this.serverAllows("can_edit")
     );
   }
 
@@ -117,7 +127,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserDuplicatePage() {
     const highestRole = this.getHighestRoleAcrossProjects();
-    return !!highestRole && highestRole >= EUserPermissions.MEMBER;
+    return !!highestRole && highestRole >= EUserPermissions.MEMBER && this.serverAllows("can_view");
   }
 
   /**
@@ -125,7 +135,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserLockPage() {
     const highestRole = this.getHighestRoleAcrossProjects();
-    return this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN;
+    return (this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN) && this.serverAllows("can_manage");
   }
 
   /**
@@ -133,7 +143,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserChangeAccess() {
     const highestRole = this.getHighestRoleAcrossProjects();
-    return this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN;
+    return (this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN) && this.serverAllows("can_manage");
   }
 
   /**
@@ -141,7 +151,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserArchivePage() {
     const highestRole = this.getHighestRoleAcrossProjects();
-    return this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN;
+    return (this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN) && this.serverAllows("can_manage");
   }
 
   /**
@@ -149,7 +159,7 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserDeletePage() {
     const highestRole = this.getHighestRoleAcrossProjects();
-    return this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN;
+    return (this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN) && this.serverAllows("can_manage");
   }
 
   /**
@@ -165,7 +175,15 @@ export class ProjectPage extends BasePage implements TProjectPage {
    */
   get canCurrentUserMovePage() {
     const highestRole = this.getHighestRoleAcrossProjects();
-    return this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN;
+    return (this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN) && this.serverAllows("can_manage");
+  }
+
+  /**
+   * @description returns true if the current logged in user can change who may view / edit the page
+   */
+  get canCurrentUserChangeRestrictions() {
+    const highestRole = this.getHighestRoleAcrossProjects();
+    return (this.isCurrentUserOwner || highestRole === EUserPermissions.ADMIN) && this.serverAllows("can_manage");
   }
 
   /**
@@ -179,7 +197,10 @@ export class ProjectPage extends BasePage implements TProjectPage {
     const isLocked = this.is_locked;
 
     return (
-      !isArchived && !isLocked && (isOwner || (isPublic && !!highestRole && highestRole >= EUserPermissions.MEMBER))
+      !isArchived &&
+      !isLocked &&
+      (isOwner || (isPublic && !!highestRole && highestRole >= EUserPermissions.MEMBER)) &&
+      this.serverAllows("can_edit")
     );
   }
 
