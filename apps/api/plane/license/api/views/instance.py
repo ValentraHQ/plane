@@ -141,6 +141,10 @@ class InstanceEndpoint(BaseAPIView):
         # File size settings
         data["file_size_limit"] = float(os.environ.get("FILE_SIZE_LIMIT", 5242880))
 
+        # Library (eBooks)
+        data["is_library_enabled"] = settings.LIBRARY_ENABLED
+        data["book_file_size_limit"] = settings.BOOK_FILE_SIZE_LIMIT
+
         # is smtp configured
         data["is_smtp_configured"] = bool(EMAIL_HOST)
 

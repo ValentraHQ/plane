@@ -20,6 +20,7 @@ import { useTranslation } from "@plane/i18n";
 import { SidebarNavItem } from "@/components/sidebar/sidebar-navigation";
 // store hooks
 import { useAppTheme } from "@/hooks/store/use-app-theme";
+import { useInstance } from "@/hooks/store/use-instance";
 import useLocalStorage from "@/hooks/use-local-storage";
 import {
   usePersonalNavigationPreferences,
@@ -38,6 +39,7 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
   const { isExtendedSidebarOpened, toggleExtendedSidebar } = useAppTheme();
   // hooks
   const { preferences: personalPreferences } = usePersonalNavigationPreferences();
+  const { config: instanceConfig } = useInstance();
   const { preferences: workspacePreferences } = useWorkspaceNavigationPreferences();
   // translation
   const { t } = useTranslation();
@@ -48,7 +50,10 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
 
   // Filter static navigation items based on personal preferences
   const filteredStaticNavigationItems = useMemo(() => {
-    const items = [...WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS_LINKS];
+    // the library is optional (LIBRARY_ENABLED on the instance)
+    const items = WORKSPACE_SIDEBAR_STATIC_NAVIGATION_ITEMS_LINKS.filter(
+      (item) => item.key !== "library" || !!instanceConfig?.is_library_enabled
+    );
     const personalItems: Array<(typeof items)[0] & { sort_order: number }> = [];
 
     // Add personal items based on preferences with their sort_order
@@ -77,7 +82,7 @@ export const SidebarMenuItems = observer(function SidebarMenuItems() {
 
     // Merge static items with sorted personal items
     return [...items, ...personalItems];
-  }, [personalPreferences]);
+  }, [personalPreferences, instanceConfig?.is_library_enabled]);
 
   const sortedNavigationItems = useMemo(
     () =>

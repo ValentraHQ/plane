@@ -10,6 +10,9 @@ The one place that decides who may do what with a library book.
 - Workspace books: every workspace admin and member can view and download; the owner and
   workspace admins can edit metadata and manage the book (visibility, archive, delete, reprocess).
 
+Collections (shelves) follow the same rules: personal ones are the owner's, workspace ones are
+visible to admins and members and managed by their owner and workspace admins.
+
 Lists use `viewable_books` (a single query); single books use `book_permissions`. Both must agree;
 a test checks that for every user and book. Sharing with specific people or groups would add one
 more condition to each, backed by its own table.
@@ -19,7 +22,7 @@ more condition to each, backed by its own table.
 from django.db.models import Q
 
 # Module imports
-from plane.db.models import Book, WorkspaceMember
+from plane.db.models import Book, BookCollection, WorkspaceMember
 
 ADMIN = 20
 MEMBER = 15
@@ -66,6 +69,28 @@ def viewable_books(workspace_id, user, role=_UNSET):
     if role is _UNSET:
         role = library_role(user, workspace_id)
     queryset = Book.objects.filter(workspace_id=workspace_id)
+    if role is None or role < MEMBER:
+        return queryset.none()
+    return queryset.filter(
+        Q(visibility=Book.VISIBILITY_WORKSPACE) | Q(visibility=Book.VISIBILITY_PERSONAL, owner_id=user.id)
+    )
+
+
+def collection_permissions(collection, user, role=_UNSET):
+    if role is _UNSET:
+        role = library_role(user, collection.workspace_id)
+    if role is None or role < MEMBER or collection.deleted_at is not None:
+        return {"can_view": False, "can_edit": False}
+    is_owner = collection.owner_id == user.id
+    if collection.visibility == Book.VISIBILITY_PERSONAL:
+        return {"can_view": is_owner, "can_edit": is_owner}
+    return {"can_view": True, "can_edit": is_owner or role >= ADMIN}
+
+
+def viewable_collections(workspace_id, user, role=_UNSET):
+    if role is _UNSET:
+        role = library_role(user, workspace_id)
+    queryset = BookCollection.objects.filter(workspace_id=workspace_id)
     if role is None or role < MEMBER:
         return queryset.none()
     return queryset.filter(

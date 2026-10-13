@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import tempfile
+from datetime import timedelta
 
 # Django imports
 from django.conf import settings
@@ -258,6 +259,22 @@ def process_book(self, book_id, token):
     except Exception as error:
         log_exception(error)
         return _fail(book_id, token, "The book could not be processed because of an unexpected error.", uploader)
+
+
+# a reservation that was never completed (browser closed, upload failed) is removed after this long
+ABANDONED_UPLOAD_AGE = timedelta(days=1)
+
+
+@shared_task
+def delete_abandoned_uploads():
+    """Delete books whose upload was reserved but never completed, with anything already stored."""
+    stale = Book.objects.filter(status=Book.STATUS_UPLOADING, created_at__lt=timezone.now() - ABANDONED_UPLOAD_AGE)
+    removed = 0
+    for book in stale:
+        book.delete()
+        purge_book_files.delay(str(book.id))
+        removed += 1
+    return removed
 
 
 @shared_task

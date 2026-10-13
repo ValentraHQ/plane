@@ -119,6 +119,17 @@ export const coreRoutes: RouteConfigEntry[] = [
           route(":workspaceSlug/wiki/:pageId", "./(all)/[workspaceSlug]/(projects)/wiki/(detail)/[pageId]/page.tsx"),
         ]),
 
+        // Library (eBooks)
+        layout("./(all)/[workspaceSlug]/(projects)/library/(list)/layout.tsx", [
+          route(":workspaceSlug/library", "./(all)/[workspaceSlug]/(projects)/library/(list)/page.tsx"),
+        ]),
+        layout("./(all)/[workspaceSlug]/(projects)/library/(detail)/layout.tsx", [
+          route(
+            ":workspaceSlug/library/books/:bookId",
+            "./(all)/[workspaceSlug]/(projects)/library/(detail)/books/[bookId]/page.tsx"
+          ),
+        ]),
+
         // Workspace Views
         layout("./(all)/[workspaceSlug]/(projects)/workspace-views/layout.tsx", [
           route(":workspaceSlug/workspace-views", "./(all)/[workspaceSlug]/(projects)/workspace-views/page.tsx"),

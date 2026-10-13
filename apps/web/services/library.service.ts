@@ -1,0 +1,180 @@
+/**
+ * Copyright (c) 2023-present Plane Software, Inc. and contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ * See the LICENSE file for details.
+ */
+
+import type { AxiosRequestConfig } from "axios";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
+import type {
+  TBook,
+  TBookChapterSummary,
+  TBookCollection,
+  TBookFilters,
+  TBookListResponse,
+  TBookTag,
+  TBookUpdatePayload,
+  TBookUploadReservation,
+  EBookVisibility,
+} from "@plane/types";
+// services
+import { APIService } from "@/services/api.service";
+import { FileUploadService } from "@/services/file-upload.service";
+
+const HASH_CHUNK = 4 * 1024 * 1024;
+
+/**
+ * SHA-256 of a file, for duplicate detection (the server checks it against the stored file).
+ * Web Crypto is only available on secure origins (https, localhost); plain-http installs fall back
+ * to an incremental implementation that also never holds the whole file in memory.
+ */
+export async function hashFile(file: File, onProgress?: (fraction: number) => void): Promise<string> {
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    onProgress?.(1);
+    return bytesToHex(new Uint8Array(digest));
+  }
+  const hasher = sha256.create();
+  for (let offset = 0; offset < file.size; offset += HASH_CHUNK) {
+    // oxlint-disable-next-line no-await-in-loop -- chunks must be hashed in order
+    hasher.update(new Uint8Array(await file.slice(offset, offset + HASH_CHUNK).arrayBuffer()));
+    onProgress?.(Math.min(1, (offset + HASH_CHUNK) / file.size));
+  }
+  return bytesToHex(hasher.digest());
+}
+
+const rethrow = (error: { response?: { data?: unknown } }) => {
+  throw error?.response?.data;
+};
+
+export class LibraryService extends APIService {
+  private fileUploadService = new FileUploadService();
+
+  constructor() {
+    super("");
+  }
+
+  private base(slug: string) {
+    return `/api/workspaces/${slug}/library`;
+  }
+
+  async listBooks(slug: string, filters: TBookFilters, offset = 0, limit = 48): Promise<TBookListResponse> {
+    const params: Record<string, string | number> = { offset, limit, order_by: filters.order_by };
+    if (filters.search) params.search = filters.search;
+    if (filters.visibility !== null) params.visibility = filters.visibility;
+    if (filters.format) params.format = filters.format;
+    if (filters.tag) params.tag = filters.tag;
+    if (filters.collection) params.collection = filters.collection;
+    if (filters.archived) params.archived = "true";
+    return this.get(`${this.base(slug)}/books/`, { params })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async getBook(slug: string, bookId: string): Promise<TBook> {
+    return this.get(`${this.base(slug)}/books/${bookId}/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async updateBook(slug: string, bookId: string, payload: TBookUpdatePayload): Promise<TBook> {
+    return this.patch(`${this.base(slug)}/books/${bookId}/`, payload)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async deleteBook(slug: string, bookId: string): Promise<void> {
+    return this.delete(`${this.base(slug)}/books/${bookId}/`)
+      .then(() => undefined)
+      .catch(rethrow);
+  }
+
+  async reprocessBook(slug: string, bookId: string): Promise<TBook> {
+    return this.post(`${this.base(slug)}/books/${bookId}/reprocess/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async getDownloadUrl(slug: string, bookId: string): Promise<{ url: string; expires_in: number }> {
+    return this.get(`${this.base(slug)}/books/${bookId}/download/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async listChapters(slug: string, bookId: string): Promise<TBookChapterSummary[]> {
+    return this.get(`${this.base(slug)}/books/${bookId}/chapters/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  /**
+   * Reserve an upload, send the file straight to storage with the signed form, then confirm it.
+   * Throws the API's error body; a duplicate comes back as { error, book_id }.
+   */
+  async uploadBook(
+    slug: string,
+    file: File,
+    sha256Hex: string,
+    visibility: EBookVisibility,
+    onUploadProgress?: AxiosRequestConfig["onUploadProgress"]
+  ): Promise<TBook> {
+    const reservation: TBookUploadReservation = await this.post(`${this.base(slug)}/books/`, {
+      name: file.name,
+      size: file.size,
+      sha256: sha256Hex,
+      visibility,
+    })
+      .then((response) => response?.data)
+      .catch(rethrow);
+    const form = new FormData();
+    Object.entries(reservation.upload_data.fields).forEach(([key, value]) => form.append(key, value));
+    form.append("file", file);
+    await this.fileUploadService.uploadFile(reservation.upload_data.url, form, onUploadProgress);
+    return this.post(`${this.base(slug)}/books/${reservation.book.id}/upload-complete/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async listTags(slug: string): Promise<TBookTag[]> {
+    return this.get(`${this.base(slug)}/tags/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async listCollections(slug: string): Promise<TBookCollection[]> {
+    return this.get(`${this.base(slug)}/collections/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async createCollection(slug: string, data: Partial<TBookCollection>): Promise<TBookCollection> {
+    return this.post(`${this.base(slug)}/collections/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async updateCollection(slug: string, collectionId: string, data: Partial<TBookCollection>): Promise<TBookCollection> {
+    return this.patch(`${this.base(slug)}/collections/${collectionId}/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async deleteCollection(slug: string, collectionId: string): Promise<void> {
+    return this.delete(`${this.base(slug)}/collections/${collectionId}/`)
+      .then(() => undefined)
+      .catch(rethrow);
+  }
+
+  async addBooksToCollection(slug: string, collectionId: string, bookIds: string[]): Promise<{ added: number }> {
+    return this.post(`${this.base(slug)}/collections/${collectionId}/books/`, { book_ids: bookIds })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async removeBookFromCollection(slug: string, collectionId: string, bookId: string): Promise<void> {
+    return this.delete(`${this.base(slug)}/collections/${collectionId}/books/${bookId}/`)
+      .then(() => undefined)
+      .catch(rethrow);
+  }
+}

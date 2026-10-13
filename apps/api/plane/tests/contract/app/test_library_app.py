@@ -263,6 +263,18 @@ class TestLibraryManagement:
         assert mine.title == "New" and mine.authors == ["A", "B"]
         assert set(mine.edited_fields) == {"title", "authors"}
 
+    def test_stale_unfinished_uploads_are_not_listed(self, library, people, workspace):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        user, client = people["member"]
+        fresh = book(workspace, user, status=Book.STATUS_UPLOADING)
+        stale = book(workspace, user, status=Book.STATUS_UPLOADING)
+        Book.objects.filter(pk=stale.id).update(created_at=timezone.now() - timedelta(hours=2))
+        ids = [b["id"] for b in client.get(url(workspace.slug)).json()["results"]]
+        assert str(fresh.id) in ids and str(stale.id) not in ids
+
     def test_archive_filter_and_search(self, library, people, workspace):
         user, client = people["member"]
         kept = book(workspace, user, title="Dune", authors=["Frank Herbert"])
@@ -349,3 +361,158 @@ class TestLibraryChapters:
         user, client = people["member"]
         mine = book(workspace, user, status=Book.STATUS_PROCESSING)
         assert client.get(url(workspace.slug, mine.id, "chapters/0/")).status_code == 409
+
+
+def coll_url(slug, collection_id=None, suffix=""):
+    base = f"/api/workspaces/{slug}/library/collections/"
+    return f"{base}{collection_id}/{suffix}" if collection_id else base
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryTags:
+    def test_tags_are_cleaned_and_filterable(self, library, people, workspace):
+        user, client = people["member"]
+        mine = book(workspace, user)
+        response = client.patch(
+            url(workspace.slug, mine.id), {"tags": [" Air  Law ", "air law", "Drones", ""]}, format="json"
+        )
+        assert response.status_code == 200 and response.json()["tags"] == ["Air Law", "Drones"]
+        mine.refresh_from_db()
+        assert "tags" not in mine.edited_fields  # tags are not extracted metadata
+        ids = [b["id"] for b in client.get(url(workspace.slug), {"tag": "Drones"}).json()["results"]]
+        assert ids == [str(mine.id)]
+        assert [b["id"] for b in client.get(url(workspace.slug), {"search": "air law"}).json()["results"]] == [
+            str(mine.id)
+        ]
+
+    def test_tag_list_never_reveals_private_books(self, library, people, workspace):
+        member_user, member_client = people["member"]
+        other_user, other_client = people["other"]
+        book(workspace, member_user, tags=["Secret Merger"])
+        book(workspace, member_user, visibility=Book.VISIBILITY_WORKSPACE, tags=["Ops", "secret merger"])
+        book(workspace, other_user, tags=["ops"])
+        assert member_client.get(f"/api/workspaces/{workspace.slug}/library/tags/").json() == [
+            {"name": "Ops", "count": 1},
+            {"name": "Secret Merger", "count": 2},
+        ]
+        assert other_client.get(f"/api/workspaces/{workspace.slug}/library/tags/").json() == [
+            {"name": "Ops", "count": 2},
+            {"name": "secret merger", "count": 1},
+        ]
+
+    def test_only_editors_can_tag(self, library, people, workspace):
+        shared = book(workspace, people["member"][0], visibility=Book.VISIBILITY_WORKSPACE)
+        assert (
+            people["other"][1].patch(url(workspace.slug, shared.id), {"tags": ["x"]}, format="json").status_code == 403
+        )
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryCollections:
+    def test_personal_collection_is_private(self, library, people, workspace, session_client):
+        user, client = people["member"]
+        created = client.post(coll_url(workspace.slug), {"name": "  To read  "}, format="json")
+        assert created.status_code == 201 and created.json()["name"] == "To read"
+        cid = created.json()["id"]
+        for other in (people["other"][1], people["admin2"][1], session_client):
+            assert all(c["id"] != cid for c in other.get(coll_url(workspace.slug)).json())
+            assert other.patch(coll_url(workspace.slug, cid), {"name": "x"}, format="json").status_code == 404
+            assert other.get(url(workspace.slug), {"collection": cid}).status_code == 404
+
+    def test_add_list_and_remove_books(self, library, people, workspace):
+        user, client = people["member"]
+        cid = client.post(coll_url(workspace.slug), {"name": "Shelf"}, format="json").json()["id"]
+        a, b = book(workspace, user, title="A"), book(workspace, user, title="B")
+        added = client.post(
+            coll_url(workspace.slug, cid, "books/"), {"book_ids": [str(a.id), str(b.id)]}, format="json"
+        )
+        assert added.json() == {"added": 2}
+        # adding again is harmless
+        assert client.post(
+            coll_url(workspace.slug, cid, "books/"), {"book_ids": [str(a.id)]}, format="json"
+        ).json() == {"added": 0}
+        listed = client.get(url(workspace.slug), {"collection": cid}).json()["results"]
+        assert {x["id"] for x in listed} == {str(a.id), str(b.id)}
+        assert client.get(coll_url(workspace.slug)).json()[0]["book_count"] == 2
+        assert client.get(url(workspace.slug, a.id)).json()["collection_ids"] == [cid]
+        assert client.delete(coll_url(workspace.slug, cid, f"books/{a.id}/")).status_code == 204
+        assert client.get(coll_url(workspace.slug)).json()[0]["book_count"] == 1
+        # deleting the collection keeps the books
+        assert client.delete(coll_url(workspace.slug, cid)).status_code == 204
+        assert client.get(url(workspace.slug, b.id)).status_code == 200
+
+    def test_cannot_add_books_one_cannot_see(self, library, people, workspace):
+        user, client = people["member"]
+        cid = client.post(coll_url(workspace.slug), {"name": "Shelf"}, format="json").json()["id"]
+        theirs = book(workspace, people["other"][0])
+        response = client.post(coll_url(workspace.slug, cid, "books/"), {"book_ids": [str(theirs.id)]}, format="json")
+        assert response.status_code == 404
+        bad = client.post(coll_url(workspace.slug, cid, "books/"), {"book_ids": ["not-a-uuid"]}, format="json")
+        assert bad.status_code == 400
+
+    def test_shared_collection_rules(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        shared = client.post(coll_url(workspace.slug), {"name": "Team shelf", "visibility": 1}, format="json").json()
+        mine_personal = book(workspace, user)
+        mine_shared = book(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        # personal books cannot go on a shared shelf
+        refused = client.post(
+            coll_url(workspace.slug, shared["id"], "books/"), {"book_ids": [str(mine_personal.id)]}, format="json"
+        )
+        assert refused.status_code == 400
+        client.post(
+            coll_url(workspace.slug, shared["id"], "books/"), {"book_ids": [str(mine_shared.id)]}, format="json"
+        )
+        # other members see it but cannot change it; admins can
+        assert any(c["id"] == shared["id"] for c in other_client.get(coll_url(workspace.slug)).json())
+        assert (
+            other_client.patch(coll_url(workspace.slug, shared["id"]), {"name": "x"}, format="json").status_code == 403
+        )
+        assert (
+            people["admin2"][1]
+            .patch(coll_url(workspace.slug, shared["id"]), {"name": "Ops shelf"}, format="json")
+            .status_code
+            == 200
+        )
+        assert (
+            people["admin2"][1]
+            .patch(coll_url(workspace.slug, shared["id"]), {"visibility": 0}, format="json")
+            .status_code
+            == 403
+        )
+        # making the book personal takes it off the shared shelf
+        client.patch(url(workspace.slug, mine_shared.id), {"visibility": 0}, format="json")
+        assert other_client.get(url(workspace.slug), {"collection": shared["id"]}).json()["results"] == []
+        assert client.get(url(workspace.slug), {"collection": shared["id"]}).json()["results"] == []
+
+    def test_sharing_a_collection_with_personal_books_is_refused(self, library, people, workspace):
+        user, client = people["member"]
+        cid = client.post(coll_url(workspace.slug), {"name": "Mine"}, format="json").json()["id"]
+        client.post(
+            coll_url(workspace.slug, cid, "books/"), {"book_ids": [str(book(workspace, user).id)]}, format="json"
+        )
+        response = client.patch(coll_url(workspace.slug, cid), {"visibility": 1}, format="json")
+        assert response.status_code == 400 and "personal book" in response.json()["error"]
+        assert client.patch(coll_url(workspace.slug, cid), {"visibility": 7}, format="json").status_code == 400
+
+    def test_guests_have_no_collections(self, library, people, workspace):
+        assert people["guest"][1].get(coll_url(workspace.slug)).status_code == 403
+        assert people["guest"][1].get(f"/api/workspaces/{workspace.slug}/library/tags/").status_code == 403
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+def test_instance_config_exposes_the_library_flag(settings, api_client):
+    settings.LIBRARY_ENABLED = True
+    from django.utils import timezone
+
+    from plane.license.models import Instance
+
+    Instance.objects.create(
+        instance_name="Test", instance_id="test-instance", current_version="test", last_checked_at=timezone.now()
+    )
+    config = api_client.get("/api/instances/").json()["config"]
+    assert config["is_library_enabled"] is True and config["book_file_size_limit"] == settings.BOOK_FILE_SIZE_LIMIT

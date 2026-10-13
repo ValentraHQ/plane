@@ -50,7 +50,7 @@ from .module import Module, ModuleIssue, ModuleLink, ModuleMember, ModuleUserPro
 from .notification import EmailNotificationLog, Notification, UserNotificationPreference
 from .page import Page, PageLabel, PageLog, PageRestriction, ProjectPage, PageVersion
 from .wiki import WikiSpace, WikiSpaceMember
-from .library import Book, BookChapter, BookResource
+from .library import Book, BookChapter, BookCollection, BookCollectionItem, BookResource
 from .project import (
     Project,
     ProjectBaseModel,

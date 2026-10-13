@@ -79,6 +79,8 @@ class Book(BaseModel):
     description = models.TextField(blank=True, default="")
     subjects = models.JSONField(default=list, blank=True)
     identifiers = models.JSONField(default=list, blank=True)
+    # free-form labels set by people who can edit the book (not by processing)
+    tags = models.JSONField(default=list, blank=True)
     # metadata fields the user changed by hand; processing does not overwrite them
     edited_fields = models.JSONField(default=list, blank=True)
 
@@ -178,3 +180,49 @@ class BookResource(BaseModel):
 
     def __str__(self):
         return f"{self.book_id}:{self.path}"
+
+
+class BookCollection(BaseModel):
+    """
+    A shelf of books. PERSONAL: the owner only. WORKSPACE: visible to every workspace admin and member,
+    managed by its owner and workspace admins, and holds workspace books only.
+    """
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="book_collections")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="book_collections")
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    visibility = models.PositiveSmallIntegerField(choices=Book.VISIBILITY_CHOICES, default=Book.VISIBILITY_PERSONAL)
+    sort_order = models.FloatField(default=65535)
+
+    class Meta:
+        verbose_name = "Book Collection"
+        verbose_name_plural = "Book Collections"
+        db_table = "book_collections"
+        ordering = ("sort_order", "name")
+
+    def __str__(self):
+        return f"{self.name} <{self.id}>"
+
+
+class BookCollectionItem(BaseModel):
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="book_collection_items")
+    collection = models.ForeignKey(BookCollection, on_delete=models.CASCADE, related_name="items")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="collection_items")
+    sort_order = models.FloatField(default=65535)
+
+    class Meta:
+        verbose_name = "Book Collection Item"
+        verbose_name_plural = "Book Collection Items"
+        db_table = "book_collection_items"
+        ordering = ("sort_order", "created_at")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["collection", "book"],
+                condition=Q(deleted_at__isnull=True),
+                name="book_collection_item_unique_when_deleted_at_null",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.collection_id}:{self.book_id}"

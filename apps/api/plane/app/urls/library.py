@@ -13,8 +13,33 @@ from plane.app.views.library.base import (
     BookReprocessEndpoint,
     BookUploadCompleteEndpoint,
 )
+from plane.app.views.library.collection import (
+    BookCollectionBooksEndpoint,
+    BookCollectionDetailEndpoint,
+    BookCollectionListEndpoint,
+    BookTagListEndpoint,
+)
 
 urlpatterns = [
+    path("workspaces/<str:slug>/library/tags/", BookTagListEndpoint.as_view(), name="library-tags"),
+    path(
+        "workspaces/<str:slug>/library/collections/", BookCollectionListEndpoint.as_view(), name="library-collections"
+    ),
+    path(
+        "workspaces/<str:slug>/library/collections/<uuid:collection_id>/",
+        BookCollectionDetailEndpoint.as_view(),
+        name="library-collection",
+    ),
+    path(
+        "workspaces/<str:slug>/library/collections/<uuid:collection_id>/books/",
+        BookCollectionBooksEndpoint.as_view(),
+        name="library-collection-books",
+    ),
+    path(
+        "workspaces/<str:slug>/library/collections/<uuid:collection_id>/books/<uuid:book_id>/",
+        BookCollectionBooksEndpoint.as_view(),
+        name="library-collection-book",
+    ),
     path("workspaces/<str:slug>/library/books/", BookListEndpoint.as_view(), name="library-books"),
     path("workspaces/<str:slug>/library/books/<uuid:book_id>/", BookDetailEndpoint.as_view(), name="library-book"),
     path(

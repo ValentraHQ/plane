@@ -12,6 +12,7 @@ library is disabled (LIBRARY_ENABLED).
 import os
 import re
 import uuid
+from datetime import timedelta
 from urllib.parse import unquote
 
 # Django imports
@@ -36,14 +37,24 @@ from plane.app.serializers.library import (
     BookUploadSerializer,
 )
 from plane.bgtasks.book_task import chapter_document, process_book, purge_book_files
-from plane.db.models import Book, BookChapter, BookResource, FileAsset, Workspace
+from plane.db.models import Book, BookChapter, BookCollectionItem, BookResource, FileAsset, Workspace
 from plane.settings.storage import S3Storage
-from plane.utils.book_access import book_permissions, library_role, viewable_books
+from plane.utils.book_access import book_permissions, library_role, viewable_books, viewable_collections
 
 from ..base import BaseAPIView
 
+# how long an unfinished upload is listed (the upload itself usually takes seconds)
+UPLOAD_GRACE = timedelta(hours=1)
 ORDER_BY = {"-created_at", "created_at", "title", "-title", "-updated_at", "updated_at"}
 RESOURCE_PLACEHOLDER = re.compile(r"plane-res:([A-Za-z0-9._~/%!$&'*+,;=@-]+)")
+
+
+def _is_uuid(value):
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False
 
 
 def _not_found():
@@ -78,8 +89,12 @@ class LibraryBaseEndpoint(BaseAPIView):
         book = viewable_books(self.workspace.id, request.user, role=role).filter(pk=book_id).first()
         return book, book_permissions(book, request.user, role=role) if book else None
 
-    def context(self, request, role):
-        return {"request": request, "role": role, "storage": S3Storage(request=request)}
+    def context(self, request, role, **extra):
+        return {"request": request, "role": role, "storage": S3Storage(request=request), **extra}
+
+    def detail_context(self, request, role):
+        visible = set(viewable_collections(self.workspace.id, request.user, role=role).values_list("id", flat=True))
+        return self.context(request, role, visible_collection_ids=visible)
 
 
 class BookListEndpoint(LibraryBaseEndpoint):
@@ -87,7 +102,9 @@ class BookListEndpoint(LibraryBaseEndpoint):
         role, error = self.access(request)
         if error:
             return error
-        books = viewable_books(self.workspace.id, request.user, role=role)
+        books = viewable_books(self.workspace.id, request.user, role=role).select_related("owner")
+        # unfinished uploads are not books yet; recent ones stay visible while they complete
+        books = books.exclude(status=Book.STATUS_UPLOADING, created_at__lt=timezone.now() - UPLOAD_GRACE)
         params = request.query_params
         if params.get("visibility") in ("0", "1"):
             books = books.filter(visibility=int(params["visibility"]))
@@ -96,6 +113,17 @@ class BookListEndpoint(LibraryBaseEndpoint):
         if params.get("format") in ("epub", "pdf"):
             books = books.filter(format=params["format"])
         books = books.filter(archived_at__isnull=params.get("archived") != "true")
+        if params.get("tag"):
+            books = books.filter(tags__contains=[params["tag"][:50]])
+        if params.get("collection"):
+            collection = (
+                viewable_collections(self.workspace.id, request.user, role=role).filter(pk=params["collection"]).first()
+                if _is_uuid(params["collection"])
+                else None
+            )
+            if collection is None:
+                return Response({"error": "Collection not found."}, status=status.HTTP_404_NOT_FOUND)
+            books = books.filter(collection_items__collection=collection, collection_items__deleted_at__isnull=True)
         query = params.get("search", "").strip()[:200]
         if query:
             books = books.filter(
@@ -103,6 +131,7 @@ class BookListEndpoint(LibraryBaseEndpoint):
                 | Q(authors__icontains=query)
                 | Q(isbn__icontains=query.replace("-", ""))
                 | Q(publisher__icontains=query)
+                | Q(tags__icontains=query)
             )
         order_by = params.get("order_by", "-created_at")
         books = books.order_by(order_by if order_by in ORDER_BY else "-created_at", "id")
@@ -199,7 +228,7 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
         book, permissions = self.get_book(request, book_id, role)
         if book is None:
             return _not_found()
-        return Response(BookDetailSerializer(book, context=self.context(request, role)).data)
+        return Response(BookDetailSerializer(book, context=self.detail_context(request, role)).data)
 
     def patch(self, request, slug, book_id):
         role, error = self.access(request)
@@ -228,6 +257,9 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
                 fields.append(name)
         if fields[2:]:
             fields.append("edited_fields")
+        if "tags" in data:
+            book.tags = data["tags"]
+            fields.append("tags")
         if "visibility" in data:
             book.visibility = data["visibility"]
             fields.append("visibility")
@@ -237,9 +269,14 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
         try:
             with transaction.atomic():
                 book.save(update_fields=fields)
+                if book.visibility == Book.VISIBILITY_PERSONAL:
+                    # a personal book cannot stay on shared shelves
+                    BookCollectionItem.objects.filter(
+                        book=book, collection__visibility=Book.VISIBILITY_WORKSPACE
+                    ).delete(soft=False)
         except IntegrityError:
             return Response({"error": "The same book is already in that library."}, status=status.HTTP_409_CONFLICT)
-        return Response(BookDetailSerializer(book, context=self.context(request, role)).data)
+        return Response(BookDetailSerializer(book, context=self.detail_context(request, role)).data)
 
     def delete(self, request, slug, book_id):
         role, error = self.access(request)

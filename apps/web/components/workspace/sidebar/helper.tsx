@@ -12,6 +12,7 @@ import {
   HomeOutline,
   InboxOutline,
   MultipleStickyOutline,
+  LibraryOutline,
   PagesOutline,
   ProjectsOutline,
   ViewsOutline,
@@ -43,5 +44,7 @@ export const getSidebarNavigationItemIcon = (key: string, className: string = ""
       return <MultipleStickyOutline className={cn("size-4 flex-shrink-0", className)} />;
     case "wiki":
       return <PagesOutline className={cn("size-4 flex-shrink-0", className)} />;
+    case "library":
+      return <LibraryOutline className={cn("size-4 flex-shrink-0", className)} />;
   }
 };

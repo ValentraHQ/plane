@@ -26,6 +26,7 @@
     "@fontsource/ibm-plex-mono": "catalog:",
     "@fontsource/material-symbols-rounded": "catalog:",
     "@makeplane/propel": "catalog:",
+    "@noble/hashes": "catalog:",
     "@plane/blocks": "workspace:*",
     "@plane/constants": "workspace:*",
     "@plane/editor": "workspace:*",

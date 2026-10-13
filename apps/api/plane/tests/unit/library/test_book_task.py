@@ -195,3 +195,32 @@ class TestProcessBook:
         book_task.purge_book_files.run(str(book.id))
         assert not [k for k in storage.store if k.startswith(f"{workspace.id}/library/{book.id}/")]
         assert FileAsset.all_objects.get(pk=book.file_id).is_deleted
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_abandoned_uploads_are_deleted(workspace, create_user, monkeypatch):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    purged = []
+    monkeypatch.setattr(book_task.purge_book_files, "delay", lambda book_id: purged.append(book_id))
+    old = Book.objects.create(
+        workspace=workspace, owner=create_user, format="epub", original_filename="a.epub", file_hash="a" * 64
+    )
+    recent = Book.objects.create(
+        workspace=workspace, owner=create_user, format="epub", original_filename="b.epub", file_hash="b" * 64
+    )
+    ready = Book.objects.create(
+        workspace=workspace,
+        owner=create_user,
+        format="epub",
+        original_filename="c.epub",
+        file_hash="c" * 64,
+        status=Book.STATUS_READY,
+    )
+    Book.objects.filter(pk__in=[old.id, ready.id]).update(created_at=timezone.now() - timedelta(days=2))
+    assert book_task.delete_abandoned_uploads.run() == 1
+    assert purged == [str(old.id)]
+    assert Book.objects.filter(pk__in=[recent.id, ready.id]).count() == 2
