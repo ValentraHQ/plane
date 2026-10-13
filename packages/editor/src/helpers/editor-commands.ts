@@ -9,6 +9,7 @@ import type { Editor, Range } from "@tiptap/core";
 import { CORE_EXTENSIONS } from "@/constants/extension";
 // extensions
 import { replaceCodeWithText } from "@/extensions/code/utils/replace-code-block-with-text";
+import { MERMAID_LANGUAGE, MERMAID_SAMPLE } from "@/extensions/code/mermaid/render";
 import type { InsertImageComponentProps } from "@/extensions/custom-image/types";
 // helpers
 import type { ExtendedEmojiStorage } from "@/extensions/emoji/emoji";
@@ -190,6 +191,18 @@ export const insertHorizontalRule = (editor: Editor, range?: Range) => {
 export const insertCallout = (editor: Editor, range?: Range) => {
   if (range) editor.chain().focus().deleteRange(range).insertCallout().run();
   else editor.chain().focus().insertCallout().run();
+};
+
+export const insertMermaidDiagram = (editor: Editor, range?: Range) => {
+  const chain = editor.chain().focus();
+  if (range) chain.deleteRange(range);
+  chain
+    .insertContent({
+      type: CORE_EXTENSIONS.CODE_BLOCK,
+      attrs: { language: MERMAID_LANGUAGE },
+      content: [{ type: "text", text: MERMAID_SAMPLE }],
+    })
+    .run();
 };
 
 export const openEmojiPicker = (editor: Editor, range?: Range) => {

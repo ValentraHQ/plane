@@ -54,6 +54,7 @@ export type TEditorCommands =
   | "to-do-list"
   | "quote"
   | "code"
+  | "mermaid"
   | "table"
   | "image"
   | "divider"

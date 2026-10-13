@@ -11,6 +11,8 @@ import type { Node as ProsemirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import highlight from "highlight.js/lib/core";
+// local imports
+import { MERMAID_LANGUAGE } from "./mermaid/render";
 
 function parseNodes(nodes: any[], className: string[] = []): { text: string; classes: string[] }[] {
   return nodes.flatMap((node) => {
@@ -52,6 +54,8 @@ function getDecorations({
   findChildren(doc, (node) => node.type.name === name).forEach((block) => {
     let from = block.pos + 1;
     const language = block.node.attrs.language || defaultLanguage;
+    // diagram source: no grammar, and guessing one gives random colours
+    if (language === MERMAID_LANGUAGE) return;
     const languages = lowlight.listLanguages();
 
     const nodes =

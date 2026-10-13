@@ -8,6 +8,7 @@ import { Smile } from "lucide-react";
 import {
   ChatOutline,
   CodeOutline,
+  WorkflowsOutline,
   H1Outline,
   H2Outline,
   H3Outline,
@@ -37,6 +38,7 @@ import {
   toggleBackgroundColor,
   insertImage,
   insertCallout,
+  insertMermaidDiagram,
   setText,
   openEmojiPicker,
 } from "@/helpers/editor-commands";
@@ -178,6 +180,15 @@ export const getSlashCommandFilteredSections =
             searchTerms: ["codeblock"],
             icon: <CodeOutline className="size-3.5" />,
             command: ({ editor, range }) => editor.chain().focus().deleteRange(range).toggleCodeBlock().run(),
+          },
+          {
+            commandKey: "mermaid",
+            key: "mermaid",
+            title: "Mermaid diagram",
+            description: "Draw a flowchart, sequence or other diagram from text.",
+            searchTerms: ["mermaid", "diagram", "flowchart", "chart", "sequence", "gantt", "graph"],
+            icon: <WorkflowsOutline className="size-3.5" />,
+            command: ({ editor, range }) => insertMermaidDiagram(editor, range),
           },
           {
             commandKey: "callout",

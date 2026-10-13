@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { NodeViewProps } from "@tiptap/react";
 import { NodeViewWrapper, NodeViewContent } from "@tiptap/react";
 import ts from "highlight.js/lib/languages/typescript";
 import { common, createLowlight } from "lowlight";
@@ -17,19 +17,27 @@ import { cn } from "@plane/utils";
 // types
 import type { TCodeBlockAttributes } from "./types";
 import { ECodeBlockAttributeNames } from "./types";
+import { MermaidBlock } from "./mermaid/mermaid-block";
+import { MERMAID_LANGUAGE } from "./mermaid/render";
 
 // we just have ts support for now
 const lowlight = createLowlight(common);
 lowlight.register("ts", ts);
 
-type Props = {
-  node: ProseMirrorNode;
-};
+type Props = Pick<NodeViewProps, "node" | "editor" | "getPos">;
 
-export function CodeBlockComponent({ node }: Props) {
+export function CodeBlockComponent({ node, editor, getPos }: Props) {
   const [copied, setCopied] = useState(false);
   // derived values
   const attrs = node.attrs as TCodeBlockAttributes;
+
+  if (attrs[ECodeBlockAttributeNames.LANGUAGE] === MERMAID_LANGUAGE) {
+    return (
+      <NodeViewWrapper key={attrs[ECodeBlockAttributeNames.ID]} className="code-block">
+        <MermaidBlock node={node} editor={editor} getPos={getPos} />
+      </NodeViewWrapper>
+    );
+  }
 
   const copyToClipboard = async (e: React.MouseEvent<HTMLButtonElement, MouseEvent>) => {
     try {
