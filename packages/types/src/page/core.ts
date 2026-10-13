@@ -26,6 +26,8 @@ export type TPage = {
   /** documentation space of a workspace wiki page; null for project pages */
   space?: string | null;
   sort_order?: number;
+  /** effective permissions from the page detail endpoint (roles, privacy and inherited restrictions) */
+  permissions?: TPagePermissions;
   project_ids?: string[] | undefined;
   sub_pages_count?: number;
   updated_at: Date | undefined;
@@ -34,6 +36,24 @@ export type TPage = {
   logo_props: TLogoProps | undefined;
   deleted_at: Date | undefined;
 } & TPageExtended;
+
+/** What the current user may do with a page, as decided by the API. */
+export type TPagePermissions = {
+  can_view: boolean;
+  can_edit: boolean;
+  can_manage: boolean;
+  can_edit_content: boolean;
+};
+
+/** A page's own view/edit restriction lists (member ids) and the restricted ancestors it inherits from. */
+export type TPageRestrictions = {
+  view: string[];
+  edit: string[];
+  inherited: { page: string; name: string; view: boolean; edit: boolean }[];
+  can_manage: boolean;
+};
+
+export type TPageRestrictionsPayload = Partial<Pick<TPageRestrictions, "view" | "edit">>;
 
 // page filters
 export type TPageNavigationTabs = "public" | "private" | "archived";

@@ -119,6 +119,7 @@ export const BlockItemAction = observer(function BlockItemAction(props: Props) {
           "make-a-copy",
           "toggle-lock",
           "toggle-access",
+          "restrictions",
           "archive-restore",
           "delete",
         ]}

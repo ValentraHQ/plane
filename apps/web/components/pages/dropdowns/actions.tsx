@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { isValidElement, useMemo, useState } from "react";
+import { isValidElement, useCallback, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
 import {
@@ -19,6 +19,7 @@ import {
   MoreHorizontalOutline,
   NewTabOutline,
   RestoreOutline,
+  ShieldOutline,
   UnlockedOutline,
 } from "@makeplane/propel/icons";
 // constants
@@ -32,6 +33,7 @@ import type { TContextMenuItem } from "@plane/blocks/context-menu";
 import { ContextMenu, getRenderableItems, resolveItemVariant } from "@plane/blocks/context-menu";
 // components
 import { DeletePageModal } from "@/components/pages/modals/delete-page-modal";
+import { PageRestrictionsModal } from "@/components/pages/modals/page-restrictions-modal";
 // hooks
 import { usePageOperations } from "@/hooks/use-page-operations";
 // plane web hooks
@@ -54,6 +56,7 @@ export type TPageActions =
   | "version-history"
   | "export"
   | "move"
+  | "restrictions"
   | "add-sub-page";
 
 type Props = {
@@ -71,6 +74,8 @@ export const PageActions = observer(function PageActions(props: Props) {
   // states
   const [deletePageModal, setDeletePageModal] = useState(false);
   const [movePageModal, setMovePageModal] = useState(false);
+  const [restrictionsModal, setRestrictionsModal] = useState(false);
+  const closeRestrictionsModal = useCallback(() => setRestrictionsModal(false), []);
   // params
   const { workspaceSlug } = useParams();
   // page flag
@@ -92,6 +97,7 @@ export const PageActions = observer(function PageActions(props: Props) {
     canCurrentUserDuplicatePage,
     canCurrentUserLockPage,
     canCurrentUserMovePage,
+    canCurrentUserChangeRestrictions,
   } = page;
   // menu items
   const MENU_ITEMS = useMemo(
@@ -114,6 +120,13 @@ export const PageActions = observer(function PageActions(props: Props) {
           title: access === EPageAccess.PUBLIC ? "Make private" : "Make public",
           icon: access === EPageAccess.PUBLIC ? LockOutline : GlobeOutline,
           shouldRender: canCurrentUserChangeAccess && !archived_at,
+        },
+        {
+          key: "restrictions",
+          action: () => setRestrictionsModal(true),
+          title: "Restrictions",
+          icon: ShieldOutline,
+          shouldRender: canCurrentUserChangeRestrictions && !archived_at,
         },
         {
           key: "open-in-new-tab",
@@ -180,6 +193,7 @@ export const PageActions = observer(function PageActions(props: Props) {
       canCurrentUserArchivePage,
       canCurrentUserDeletePage,
       canCurrentUserMovePage,
+      canCurrentUserChangeRestrictions,
       isMovePageEnabled,
       pageOperations,
     ]
@@ -201,6 +215,9 @@ export const PageActions = observer(function PageActions(props: Props) {
         page={page}
         storeType={storeType}
       />
+      {restrictionsModal && (
+        <PageRestrictionsModal page={page} isOpen={restrictionsModal} onClose={closeRestrictionsModal} />
+      )}
       {parentRef && <ContextMenu parentRef={parentRef} items={arrangedOptions} />}
       <Menu>
         <MenuTrigger

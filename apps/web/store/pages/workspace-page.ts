@@ -66,6 +66,14 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
       duplicate: async () => {
         throw new Error("Duplicating wiki pages is not supported yet.");
       },
+      fetchRestrictions: async () => {
+        const { slug, pageId } = requireIds();
+        return await workspacePageService.fetchRestrictions(slug, pageId);
+      },
+      updateRestrictions: async (payload) => {
+        const { slug, pageId } = requireIds();
+        return await workspacePageService.updateRestrictions(slug, pageId, payload);
+      },
     });
     makeObservable(this, {
       // computed
@@ -78,6 +86,7 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
       canCurrentUserDeletePage: computed,
       canCurrentUserFavoritePage: computed,
       canCurrentUserMovePage: computed,
+      canCurrentUserChangeRestrictions: computed,
       isContentEditable: computed,
     });
   }
@@ -104,11 +113,11 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
   }
 
   get canCurrentUserAccessPage() {
-    return this.canView;
+    return this.canView && this.serverAllows("can_view");
   }
 
   get canCurrentUserEditPage() {
-    return this.canEdit;
+    return this.canEdit && this.serverAllows("can_edit");
   }
 
   // not supported for wiki pages yet (no API)
@@ -117,20 +126,20 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
   }
 
   get canCurrentUserLockPage() {
-    return this.canManage;
+    return this.canManage && this.serverAllows("can_manage");
   }
 
   // the API only lets the owner change access
   get canCurrentUserChangeAccess() {
-    return this.isCurrentUserOwner && this.canEdit;
+    return this.isCurrentUserOwner && this.canEdit && this.serverAllows("can_manage");
   }
 
   get canCurrentUserArchivePage() {
-    return this.canManage;
+    return this.canManage && this.serverAllows("can_manage");
   }
 
   get canCurrentUserDeletePage() {
-    return this.canManage;
+    return this.canManage && this.serverAllows("can_manage");
   }
 
   // favourites are a project feature
@@ -140,14 +149,19 @@ export class WorkspacePage extends BasePage implements TWorkspacePage {
 
   // moving within/between documentation spaces (tree drag-and-drop, Move to…)
   get canCurrentUserMovePage() {
-    return this.canManage && !this.archived_at;
+    return this.canManage && !this.archived_at && this.serverAllows("can_manage");
+  }
+
+  // who may view / edit the page and its sub-pages
+  get canCurrentUserChangeRestrictions() {
+    return this.canManage && this.serverAllows("can_manage");
   }
 
   /**
    * @description returns true if the page content can be edited right now
    */
   get isContentEditable() {
-    return !this.archived_at && !this.is_locked && this.canEdit;
+    return !this.archived_at && !this.is_locked && this.canEdit && this.serverAllows("can_edit");
   }
 
   getRedirectionLink = computedFn(() => {

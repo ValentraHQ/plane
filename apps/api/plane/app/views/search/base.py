@@ -29,13 +29,13 @@ from rest_framework.response import Response
 # Module imports
 from plane.app.views.base import BaseAPIView
 from plane.app.permissions import WorkspaceUserPermission
+from plane.utils.page_access import viewable_project_pages
 from plane.db.models import (
     Workspace,
     Project,
     Issue,
     Cycle,
     Module,
-    Page,
     IssueView,
     ProjectMember,
     ProjectPage,
@@ -168,14 +168,11 @@ class GlobalSearchEndpoint(BaseAPIView):
             for field in fields:
                 q |= Q(**{f"{field}__icontains": query})
 
+        # only pages the user may open: no private pages of others, guest rules and
+        # inherited restrictions applied (plane.utils.page_access)
         pages = (
-            Page.objects.filter(
-                q,
-                projects__project_projectmember__member=self.request.user,
-                projects__project_projectmember__is_active=True,
-                projects__archived_at__isnull=True,
-                workspace__slug=slug,
-            )
+            viewable_project_pages(slug, self.request.user)
+            .filter(q)
             .annotate(
                 project_ids=Coalesce(
                     ArrayAgg("projects__id", distinct=True, filter=~Q(projects__id=True)),
@@ -506,14 +503,8 @@ class SearchEndpoint(BaseAPIView):
                             q |= Q(**{f"{field}__icontains": query})
 
                     pages = (
-                        Page.objects.filter(
-                            q,
-                            projects__project_projectmember__member=self.request.user,
-                            projects__project_projectmember__is_active=True,
-                            projects__id=project_id,
-                            workspace__slug=slug,
-                            access=0,
-                        )
+                        viewable_project_pages(slug, self.request.user, project_id)
+                        .filter(q, access=0, projects__id=project_id)
                         .order_by("-created_at")
                         .distinct()
                         .values(
@@ -708,14 +699,8 @@ class SearchEndpoint(BaseAPIView):
                             q |= Q(**{f"{field}__icontains": query})
 
                     pages = (
-                        Page.objects.filter(
-                            q,
-                            projects__project_projectmember__member=self.request.user,
-                            projects__project_projectmember__is_active=True,
-                            workspace__slug=slug,
-                            access=0,
-                            is_global=True,
-                        )
+                        viewable_project_pages(slug, self.request.user)
+                        .filter(q, access=0, is_global=True)
                         .order_by("-created_at")
                         .distinct()
                         .values(

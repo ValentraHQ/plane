@@ -29,8 +29,9 @@ The default space is **open** and cannot be deleted.
 
 ## Access rules
 
-All checks go through one resolver, `plane/utils/wiki_permissions.py`. It is used by every wiki endpoint and,
-through the `permissions` endpoint, by the real-time server.
+Space roles are resolved in `plane/utils/wiki_permissions.py`. Page-level decisions go through
+`plane/utils/page_access.py` (see [Page restrictions](page-restrictions.md)), which every wiki endpoint and, through
+the `permissions` endpoint, the real-time server use.
 
 Space role for a user:
 
@@ -50,7 +51,7 @@ Page permissions inside a space:
 Users without a role never see that a space or its pages exist: they get 404, not 403. Guests and people
 outside the workspace get 403 from the workspace permission check.
 
-Page-level restrictions that inherit to sub-pages are a separate feature (PR 2).
+These rules are then narrowed by inherited page restrictions and private parent pages: see [Page restrictions](page-restrictions.md).
 
 ## API
 

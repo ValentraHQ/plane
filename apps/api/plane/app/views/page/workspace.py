@@ -18,7 +18,7 @@ from datetime import datetime
 from django.contrib.postgres.fields import ArrayField
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
-from django.db.models import BooleanField, Count, IntegerField, OuterRef, Subquery, UUIDField, Value
+from django.db.models import BooleanField, Count, Exists, IntegerField, OuterRef, Subquery, UUIDField, Value
 from django.db.models.functions import Coalesce
 from django.http import StreamingHttpResponse
 
@@ -38,7 +38,7 @@ from plane.app.serializers import (
 )
 from plane.bgtasks.page_transaction_task import page_transaction
 from plane.bgtasks.page_version_task import track_page_version
-from plane.db.models import Page, PageVersion, Workspace
+from plane.db.models import Page, PageRestriction, PageVersion, Workspace
 from plane.utils.error_codes import ERROR_CODES
 from plane.utils.order_queryset import PAGE_ORDER_BY_ALLOWLIST, sanitize_order_by
 from plane.utils.wiki_permissions import (
@@ -125,6 +125,15 @@ class WorkspacePageViewSet(BaseViewSet):
             return None, None
         return page, page_permissions(page, request.user)
 
+    def _check_new_parent(self, request, parent_id):
+        """A page can only be placed under a parent the user can edit (restrictions inherit)."""
+        if not parent_id:
+            return None
+        parent = self._get_page(_parse_uuid(parent_id))
+        if parent is None or not page_permissions(parent, request.user)["can_edit"]:
+            return _forbidden("You don't have permission to add pages under the target page")
+        return None
+
     @allow_permission(WIKI_ROLES, level="WORKSPACE")
     def list(self, request, slug):
         queryset = self.get_queryset()
@@ -155,6 +164,8 @@ class WorkspacePageViewSet(BaseViewSet):
             parent = visible.filter(pk=_parse_uuid(parent_id)).select_related("space").first()
             if parent is None:
                 return _bad_request("Parent page not found in this space")
+            if not page_permissions(parent, request.user)["can_edit"]:
+                return _forbidden("You don't have permission to add pages under this page")
             space = parent.space
             requested_space = request.data.get("space")
             if requested_space and str(requested_space) != str(space.id):
@@ -193,10 +204,12 @@ class WorkspacePageViewSet(BaseViewSet):
 
     @allow_permission(WIKI_ROLES, level="WORKSPACE")
     def retrieve(self, request, slug, page_id):
-        page = self._get_page(page_id)
+        page, perms = self._page_and_permissions(request, page_id)
         if page is None:
             return _not_found()
-        return Response(PageDetailSerializer(page).data, status=status.HTTP_200_OK)
+        data = PageDetailSerializer(page).data
+        data["permissions"] = perms
+        return Response(data, status=status.HTTP_200_OK)
 
     @allow_permission(WIKI_ROLES, level="WORKSPACE")
     def permissions(self, request, slug, page_id):
@@ -204,14 +217,7 @@ class WorkspacePageViewSet(BaseViewSet):
         page, perms = self._page_and_permissions(request, page_id)
         if page is None:
             return _not_found()
-        return Response(
-            {
-                **perms,
-                # what a live editor may do right now (locked/archived pages are read-only)
-                "can_edit_content": perms["can_edit"] and not page.is_locked and not page.archived_at,
-            },
-            status=status.HTTP_200_OK,
-        )
+        return Response(perms, status=status.HTTP_200_OK)
 
     @allow_permission(WIKI_ROLES, level="WORKSPACE")
     def partial_update(self, request, slug, page_id):
@@ -236,6 +242,9 @@ class WorkspacePageViewSet(BaseViewSet):
             )
             if parent_error:
                 return _bad_request(parent_error)
+            parent_error = self._check_new_parent(request, request.data.get("parent"))
+            if parent_error:
+                return parent_error
         if page.access != request.data.get("access", page.access) and page.owned_by_id != request.user.id:
             return _bad_request("Access cannot be updated since this page is owned by someone else")
 
@@ -275,6 +284,9 @@ class WorkspacePageViewSet(BaseViewSet):
         )
         if parent_error:
             return _bad_request(parent_error)
+        parent_error = self._check_new_parent(request, new_parent_id)
+        if parent_error:
+            return parent_error
 
         sort_order = request.data.get("sort_order")
         if sort_order is not None:
@@ -451,8 +463,27 @@ class WikiSpacePageTreeEndpoint(BaseAPIView):
         pages = (
             viewable_wiki_pages(slug, request.user)
             .filter(space=space, archived_at__isnull=True)
+            .annotate(
+                view_restricted=Exists(
+                    PageRestriction.objects.filter(page_id=OuterRef("pk"), kind=PageRestriction.VIEW)
+                ),
+                edit_restricted=Exists(
+                    PageRestriction.objects.filter(page_id=OuterRef("pk"), kind=PageRestriction.EDIT)
+                ),
+            )
             .order_by("sort_order", "created_at")
-            .values("id", "name", "parent_id", "sort_order", "logo_props", "access", "is_locked", "owned_by_id")
+            .values(
+                "id",
+                "name",
+                "parent_id",
+                "sort_order",
+                "logo_props",
+                "access",
+                "is_locked",
+                "owned_by_id",
+                "view_restricted",
+                "edit_restricted",
+            )
         )
         nodes = [
             {
@@ -465,6 +496,9 @@ class WikiSpacePageTreeEndpoint(BaseAPIView):
                 "is_locked": p["is_locked"],
                 "owned_by": p["owned_by_id"],
                 "space": space.id,
+                # the page's own restrictions; inherited ones are shown on the page
+                "view_restricted": p["view_restricted"],
+                "edit_restricted": p["edit_restricted"],
             }
             for p in pages
         ]

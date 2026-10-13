@@ -412,5 +412,5 @@ class TestProjectPagePermissionsEndpoint:
 
         assert owner.json()["can_edit_content"] is True
         # a guest without guest_view_all_features may not see others' pages, live or not
-        assert guest.status_code == 403 or guest.json()["can_view"] is False
+        assert guest.status_code == 404
         assert outsider.status_code == 403

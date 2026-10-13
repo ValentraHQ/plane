@@ -9,7 +9,15 @@ import { action, computed, makeObservable, observable, reaction, runInAction } f
 // plane imports
 import { EPageAccess } from "@plane/constants";
 import type { ChangeHandlerPayload } from "@plane/blocks/emoji-icon-picker";
-import type { TDocumentPayload, TLogoProps, TNameDescriptionLoader, TPage } from "@plane/types";
+import type {
+  TDocumentPayload,
+  TLogoProps,
+  TNameDescriptionLoader,
+  TPage,
+  TPagePermissions,
+  TPageRestrictions,
+  TPageRestrictionsPayload,
+} from "@plane/types";
 // plane web store
 import { ExtendedBasePage } from "@/store/pages/extended-base-page";
 import type { RootStore } from "@/store/root.store";
@@ -42,6 +50,9 @@ export type TBasePage = TPage & {
   removePageFromFavorites: () => Promise<void>;
   duplicate: () => Promise<TPage | undefined>;
   mutateProperties: (data: Partial<TPage>, shouldUpdateName?: boolean) => void;
+  serverAllows: (key: keyof TPagePermissions) => boolean;
+  fetchRestrictions: () => Promise<TPageRestrictions>;
+  updateRestrictions: (payload: TPageRestrictionsPayload) => Promise<TPageRestrictions>;
   setSyncingStatus: (status: "syncing" | "synced" | "error") => void;
   // sub-store
   editor: PageEditorInstance;
@@ -57,6 +68,7 @@ export type TBasePagePermissions = {
   canCurrentUserDeletePage: boolean;
   canCurrentUserFavoritePage: boolean;
   canCurrentUserMovePage: boolean;
+  canCurrentUserChangeRestrictions: boolean;
   isContentEditable: boolean;
 };
 
@@ -71,6 +83,8 @@ export type TBasePageServices = {
   }>;
   restore: () => Promise<void>;
   duplicate: () => Promise<TPage>;
+  fetchRestrictions: () => Promise<TPageRestrictions>;
+  updateRestrictions: (payload: TPageRestrictionsPayload) => Promise<TPageRestrictions>;
 };
 
 export type TPageInstance = TBasePage &
@@ -100,6 +114,7 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
   sub_pages_count: number | undefined;
   space: string | null | undefined;
   sort_order: number | undefined;
+  permissions: TPagePermissions | undefined;
   project_ids?: string[] | undefined;
   created_by: string | undefined;
   updated_by: string | undefined;
@@ -141,6 +156,7 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
     this.sub_pages_count = page?.sub_pages_count;
     this.space = page?.space ?? null;
     this.sort_order = page?.sort_order;
+    this.permissions = page?.permissions;
     this.project_ids = page?.project_ids || undefined;
     this.created_by = page?.created_by || undefined;
     this.updated_by = page?.updated_by || undefined;
@@ -170,6 +186,7 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       sub_pages_count: observable.ref,
       space: observable.ref,
       sort_order: observable.ref,
+      permissions: observable.ref,
       project_ids: observable,
       created_by: observable.ref,
       updated_by: observable.ref,
@@ -250,6 +267,7 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       sub_pages_count: this.sub_pages_count,
       space: this.space,
       sort_order: this.sort_order,
+      permissions: this.permissions,
       project_ids: this.project_ids,
       created_by: this.created_by,
       updated_by: this.updated_by,
@@ -258,6 +276,15 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       deleted_at: this.deleted_at,
       ...this.asJSONExtended,
     };
+  }
+
+  /**
+   * The API's verdict for this user, once the page detail has been loaded. Restrictions
+   * inherited from parent pages are only known to the API, so they can only narrow the
+   * role-based rules computed locally, never widen them.
+   */
+  serverAllows(key: keyof TPagePermissions) {
+    return this.permissions?.[key] ?? true;
   }
 
   get isCurrentUserOwner() {
@@ -560,6 +587,17 @@ export class BasePage extends ExtendedBasePage implements TBasePage {
       if (key === "name" && !shouldUpdateName) return;
       set(this, key, value);
     });
+  };
+
+  fetchRestrictions = async () => await this.services.fetchRestrictions();
+
+  /** replace the view/edit lists; the effective permissions may change, so reload them */
+  updateRestrictions = async (payload: TPageRestrictionsPayload) => {
+    const restrictions = await this.services.updateRestrictions(payload);
+    runInAction(() => {
+      if (this.permissions) this.permissions = { ...this.permissions, can_manage: restrictions.can_manage };
+    });
+    return restrictions;
   };
 
   setSyncingStatus = (status: "syncing" | "synced" | "error") => {

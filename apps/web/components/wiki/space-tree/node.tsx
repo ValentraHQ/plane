@@ -21,6 +21,7 @@ import {
   AddOutline,
   ChevronRightOutline,
   LockOutline,
+  ShieldOutline,
   MoreHorizontalOutline,
   PagesOutline,
   RightArrowOutline,
@@ -59,7 +60,7 @@ export const WikiTreeNode = observer(function WikiTreeNode(props: Props) {
   // store hooks
   const page = usePage({ pageId, storeType });
   const { createPage, getPageById } = usePageStore(storeType);
-  const { getTreeChildIds, movePage, getSpaceRole } = useWikiSpaces();
+  const { getTreeChildIds, movePage, getSpaceRole, restrictionFlags } = useWikiSpaces();
   const router = useAppRouter();
   // derived values
   const childIds = getTreeChildIds(spaceId, pageId);
@@ -206,6 +207,12 @@ export const WikiTreeNode = observer(function WikiTreeNode(props: Props) {
           )}
           <span className="truncate">{getPageName(page.name)}</span>
           {page.access === 1 && <LockOutline className="size-3 flex-shrink-0 text-placeholder" aria-label="Private" />}
+          {(restrictionFlags[pageId]?.view || restrictionFlags[pageId]?.edit) && (
+            <ShieldOutline
+              className="size-3 flex-shrink-0 text-placeholder"
+              aria-label={restrictionFlags[pageId]?.view ? "Viewing restricted" : "Editing restricted"}
+            />
+          )}
         </Link>
         <div className="hidden flex-shrink-0 items-center group-focus-within:flex group-hover:flex">
           {canAddSubPage && (
