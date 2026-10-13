@@ -9,7 +9,12 @@ import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import type {
   TBook,
+  TBookChapterContent,
   TBookChapterSummary,
+  TBookReadingState,
+  TBookReadingStatePayload,
+  TBookSearchResponse,
+  TReaderPreferences,
   TBookCollection,
   TBookFilters,
   TBookListResponse,
@@ -18,6 +23,7 @@ import type {
   TBookUploadReservation,
   EBookVisibility,
 } from "@plane/types";
+import { API_BASE_URL } from "@plane/constants";
 // services
 import { APIService } from "@/services/api.service";
 import { FileUploadService } from "@/services/file-upload.service";
@@ -52,7 +58,7 @@ export class LibraryService extends APIService {
   private fileUploadService = new FileUploadService();
 
   constructor() {
-    super("");
+    super(API_BASE_URL);
   }
 
   private base(slug: string) {
@@ -67,6 +73,7 @@ export class LibraryService extends APIService {
     if (filters.tag) params.tag = filters.tag;
     if (filters.collection) params.collection = filters.collection;
     if (filters.archived) params.archived = "true";
+    if (filters.reading) params.reading = filters.reading;
     return this.get(`${this.base(slug)}/books/`, { params })
       .then((response) => response?.data)
       .catch(rethrow);
@@ -132,6 +139,60 @@ export class LibraryService extends APIService {
     form.append("file", file);
     await this.fileUploadService.uploadFile(reservation.upload_data.url, form, onUploadProgress);
     return this.post(`${this.base(slug)}/books/${reservation.book.id}/upload-complete/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async getChapter(slug: string, bookId: string, index: number): Promise<TBookChapterContent> {
+    return this.get(`${this.base(slug)}/books/${bookId}/chapters/${index}/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async getReadingState(slug: string, bookId: string): Promise<TBookReadingState> {
+    return this.get(`${this.base(slug)}/books/${bookId}/reading-state/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async saveReadingState(slug: string, bookId: string, payload: TBookReadingStatePayload): Promise<TBookReadingState> {
+    return this.put(`${this.base(slug)}/books/${bookId}/reading-state/`, payload)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  /** Save the position while the page is being hidden or closed (the request outlives the page). */
+  saveReadingStateOnExit(slug: string, bookId: string, payload: TBookReadingStatePayload) {
+    const csrf = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/)?.[1] ?? "";
+    void fetch(`${this.baseURL ?? ""}${this.base(slug)}/books/${bookId}/reading-state/`, {
+      method: "PUT",
+      keepalive: true,
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": decodeURIComponent(csrf) },
+      body: JSON.stringify(payload),
+    }).catch(() => undefined);
+  }
+
+  async getContinueReading(slug: string): Promise<TBook[]> {
+    return this.get(`${this.base(slug)}/continue-reading/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async getReaderPreferences(slug: string): Promise<TReaderPreferences> {
+    return this.get(`${this.base(slug)}/reader-preferences/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async saveReaderPreferences(slug: string, preferences: Partial<TReaderPreferences>): Promise<TReaderPreferences> {
+    return this.put(`${this.base(slug)}/reader-preferences/`, preferences)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async searchBook(slug: string, bookId: string, query: string): Promise<TBookSearchResponse> {
+    return this.get(`${this.base(slug)}/books/${bookId}/search/`, { params: { q: query } })
       .then((response) => response?.data)
       .catch(rethrow);
   }

@@ -226,3 +226,58 @@ class BookCollectionItem(BaseModel):
 
     def __str__(self):
         return f"{self.collection_id}:{self.book_id}"
+
+
+class BookReadingState(BaseModel):
+    """
+    One person's reading of one book: where they are, how far, and whether they finished it.
+    Private to that person. `position` is the reader's anchor:
+    {"chapter": <index>, "offset": <character offset in the chapter's text>, "quote": <text at that point>}.
+    """
+
+    STATUS_UNREAD = 0
+    STATUS_READING = 1
+    STATUS_COMPLETED = 2
+    STATUS_CHOICES = ((STATUS_UNREAD, "Unread"), (STATUS_READING, "Reading"), (STATUS_COMPLETED, "Completed"))
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="book_reading_states")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="reading_states")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="book_reading_states")
+    position = models.JSONField(default=dict, blank=True)
+    # 0..100, from the reader
+    progress = models.FloatField(default=0)
+    status = models.PositiveSmallIntegerField(choices=STATUS_CHOICES, default=STATUS_UNREAD)
+    last_opened_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Book Reading State"
+        verbose_name_plural = "Book Reading States"
+        db_table = "book_reading_states"
+        ordering = ("-last_opened_at",)
+        indexes = [models.Index(fields=["user", "workspace", "last_opened_at"], name="book_reading_recent_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["book", "user"],
+                condition=Q(deleted_at__isnull=True),
+                name="book_reading_state_unique_when_deleted_at_null",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.book_id} {self.progress:.0f}%"
+
+
+class ReaderPreferences(BaseModel):
+    """A person's reader settings (font, size, spacing, theme, layout), the same on every device."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reader_preferences")
+    preferences = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = "Reader Preferences"
+        verbose_name_plural = "Reader Preferences"
+        db_table = "reader_preferences"
+
+    def __str__(self):
+        return f"reader preferences of {self.user_id}"

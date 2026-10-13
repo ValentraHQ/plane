@@ -11,7 +11,7 @@ import useSWR from "swr";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 // components
 import { PageHead } from "@/components/core/page-title";
-import { BookGrid } from "@/components/library/book-grid";
+import { BookGrid, ContinueReading } from "@/components/library/book-grid";
 import { LibraryNav } from "@/components/library/library-nav";
 import { LibraryToolbar } from "@/components/library/library-toolbar";
 import { BookDropZone, BookUploadModal, BookUploadPanel } from "@/components/library/upload";
@@ -24,8 +24,16 @@ import type { Route } from "./+types/page";
 function LibraryPage({ params }: Route.ComponentProps) {
   const { workspaceSlug } = params;
   const { config } = useInstance();
-  const { filters, fetchBooks, fetchTags, fetchCollections, uploadDialog, openUploadDialog, closeUploadDialog } =
-    useLibrary();
+  const {
+    filters,
+    fetchBooks,
+    fetchTags,
+    fetchCollections,
+    fetchContinueReading,
+    uploadDialog,
+    openUploadDialog,
+    closeUploadDialog,
+  } = useLibrary();
   const { allowPermissions } = useUserPermissions();
   const enabled = !!config?.is_library_enabled;
   const canUpload =
@@ -37,6 +45,17 @@ function LibraryPage({ params }: Route.ComponentProps) {
   }, [enabled, fetchBooks, filtersKey, workspaceSlug]);
   useSWR(enabled ? `LIBRARY_TAGS_${workspaceSlug}` : null, () => fetchTags(workspaceSlug));
   useSWR(enabled ? `LIBRARY_COLLECTIONS_${workspaceSlug}` : null, () => fetchCollections(workspaceSlug));
+  useSWR(enabled ? `LIBRARY_CONTINUE_${workspaceSlug}` : null, () => fetchContinueReading(workspaceSlug), {
+    revalidateOnMount: true,
+  });
+  const isHome =
+    !filters.search &&
+    filters.visibility === null &&
+    !filters.format &&
+    !filters.tag &&
+    !filters.collection &&
+    !filters.archived &&
+    !filters.reading;
 
   if (config && !enabled) {
     return (
@@ -55,6 +74,7 @@ function LibraryPage({ params }: Route.ComponentProps) {
             <LibraryNav workspaceSlug={workspaceSlug} />
           </aside>
           <main className="flex min-w-0 flex-1 flex-col gap-4">
+            {isHome && <ContinueReading workspaceSlug={workspaceSlug} />}
             <LibraryToolbar />
             <BookGrid workspaceSlug={workspaceSlug} canUpload={canUpload} onUpload={() => openUploadDialog()} />
           </main>

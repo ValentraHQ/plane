@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 // plane imports
 import { SearchOutline } from "@makeplane/propel/icons";
-import type { TBookFormat, TBookOrderBy } from "@plane/types";
+import type { TBookFilters, TBookFormat, TBookOrderBy } from "@plane/types";
 // hooks
 import { useLibrary } from "@/hooks/store/use-library";
 
@@ -76,6 +76,19 @@ export const LibraryToolbar = observer(function LibraryToolbar() {
               {tag.name} ({tag.count})
             </option>
           ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-1">
+        <span className="sr-only">Reading</span>
+        <select
+          className={selectClass}
+          value={filters.reading ?? ""}
+          onChange={(e) => setFilters({ reading: (e.target.value || null) as TBookFilters["reading"] })}
+        >
+          <option value="">Any progress</option>
+          <option value="unread">Not started</option>
+          <option value="reading">Reading</option>
+          <option value="completed">Finished</option>
         </select>
       </label>
       <label className="flex items-center gap-1">

@@ -123,6 +123,12 @@ export const coreRoutes: RouteConfigEntry[] = [
         layout("./(all)/[workspaceSlug]/(projects)/library/(list)/layout.tsx", [
           route(":workspaceSlug/library", "./(all)/[workspaceSlug]/(projects)/library/(list)/page.tsx"),
         ]),
+        layout("./(all)/[workspaceSlug]/(projects)/library/(reader)/layout.tsx", [
+          route(
+            ":workspaceSlug/library/books/:bookId/read",
+            "./(all)/[workspaceSlug]/(projects)/library/(reader)/books/[bookId]/read/page.tsx"
+          ),
+        ]),
         layout("./(all)/[workspaceSlug]/(projects)/library/(detail)/layout.tsx", [
           route(
             ":workspaceSlug/library/books/:bookId",

@@ -13,6 +13,12 @@ from plane.app.views.library.base import (
     BookReprocessEndpoint,
     BookUploadCompleteEndpoint,
 )
+from plane.app.views.library.reading import (
+    BookReadingStateEndpoint,
+    BookSearchEndpoint,
+    ContinueReadingEndpoint,
+    ReaderPreferencesEndpoint,
+)
 from plane.app.views.library.collection import (
     BookCollectionBooksEndpoint,
     BookCollectionDetailEndpoint,
@@ -21,6 +27,26 @@ from plane.app.views.library.collection import (
 )
 
 urlpatterns = [
+    path(
+        "workspaces/<str:slug>/library/continue-reading/",
+        ContinueReadingEndpoint.as_view(),
+        name="library-continue-reading",
+    ),
+    path(
+        "workspaces/<str:slug>/library/reader-preferences/",
+        ReaderPreferencesEndpoint.as_view(),
+        name="library-reader-preferences",
+    ),
+    path(
+        "workspaces/<str:slug>/library/books/<uuid:book_id>/reading-state/",
+        BookReadingStateEndpoint.as_view(),
+        name="library-book-reading-state",
+    ),
+    path(
+        "workspaces/<str:slug>/library/books/<uuid:book_id>/search/",
+        BookSearchEndpoint.as_view(),
+        name="library-book-search",
+    ),
     path("workspaces/<str:slug>/library/tags/", BookTagListEndpoint.as_view(), name="library-tags"),
     path(
         "workspaces/<str:slug>/library/collections/", BookCollectionListEndpoint.as_view(), name="library-collections"

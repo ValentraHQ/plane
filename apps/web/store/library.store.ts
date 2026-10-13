@@ -14,7 +14,7 @@ import type {
   TBookTag,
   TBookUpdatePayload,
 } from "@plane/types";
-import { EBookStatus, EBookVisibility } from "@plane/types";
+import { EBookReadingStatus, EBookStatus, EBookVisibility } from "@plane/types";
 import { LibraryService, hashFile } from "@/services/library.service";
 import type { CoreRootStore } from "./root.store";
 
@@ -42,6 +42,7 @@ export const DEFAULT_BOOK_FILTERS: TBookFilters = {
   tag: null,
   collection: null,
   archived: false,
+  reading: null,
   order_by: "-created_at",
 };
 
@@ -66,6 +67,10 @@ export interface ILibraryStore {
   collections: Record<string, TBookCollection>;
   chapters: Record<string, TBookChapterSummary[]>;
   uploads: TBookUpload[];
+  /** books the user is in the middle of, most recent first */
+  continueReading: TBook[];
+  fetchContinueReading: (slug: string) => Promise<void>;
+  setReadingStatus: (slug: string, bookId: string, status: EBookReadingStatus) => Promise<void>;
   /** the upload dialog (opened from the header, the empty state or by dropping files) */
   uploadDialog: { isOpen: boolean; files: File[] };
   openUploadDialog: (files?: File[]) => void;
@@ -115,6 +120,7 @@ export class LibraryStore implements ILibraryStore {
   chapters: Record<string, TBookChapterSummary[]> = {};
   uploads: TBookUpload[] = [];
   uploadDialog: { isOpen: boolean; files: File[] } = { isOpen: false, files: [] };
+  continueReading: TBook[] = [];
   // a newer list request makes older responses irrelevant
   private listRequest = 0;
   private uploadCounter = 0;
@@ -133,6 +139,9 @@ export class LibraryStore implements ILibraryStore {
       chapters: observable,
       uploads: observable,
       uploadDialog: observable.ref,
+      continueReading: observable.ref,
+      fetchContinueReading: action,
+      setReadingStatus: action,
       openUploadDialog: action,
       closeUploadDialog: action,
       hasMore: computed,
@@ -176,6 +185,24 @@ export class LibraryStore implements ILibraryStore {
   private upsert(book: TBook) {
     set(this.books, [book.id], { ...this.books[book.id], ...book });
   }
+
+  fetchContinueReading = async (slug: string) => {
+    const books = await service.getContinueReading(slug);
+    runInAction(() => {
+      books.forEach((book) => this.upsert(book));
+      this.continueReading = books;
+    });
+  };
+
+  setReadingStatus = async (slug: string, bookId: string, status: EBookReadingStatus) => {
+    const state = await service.saveReadingState(slug, bookId, { status });
+    runInAction(() => {
+      const book = this.books[bookId];
+      if (book)
+        book.my_reading = { progress: state.progress, status: state.status, last_opened_at: state.last_opened_at };
+    });
+    void this.fetchContinueReading(slug);
+  };
 
   openUploadDialog = (files: File[] = []) => {
     this.uploadDialog = { isOpen: true, files };
