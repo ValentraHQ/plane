@@ -58,6 +58,9 @@ export interface IInstanceConfig {
   has_unsplash_configured: boolean;
   has_llm_configured: boolean;
   file_size_limit: number | undefined;
+  // library (eBooks)
+  is_library_enabled?: boolean;
+  book_file_size_limit?: number;
   is_smtp_configured: boolean;
   app_base_url: string | undefined;
   space_base_url: string | undefined;

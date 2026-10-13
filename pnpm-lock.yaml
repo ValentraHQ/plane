@@ -66,6 +66,9 @@ catalogs:
     '@makeplane/propel':
       specifier: 0.7.3
       version: 0.7.3
+    '@noble/hashes':
+      specifier: 1.8.0
+      version: 1.8.0
     '@react-pdf/renderer':
       specifier: ^4.8.1
       version: 4.8.1
@@ -980,6 +983,9 @@ importers:
       '@makeplane/propel':
         specifier: 'catalog:'
         version: 0.7.3(@date-fns/tz@1.4.1)(@types/react@19.2.17)(date-fns@4.1.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.1.17)
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 1.8.0
       '@plane/blocks':
         specifier: workspace:*
         version: link:../../packages/blocks

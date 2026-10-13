@@ -13,8 +13,8 @@ from django.conf import settings
 from rest_framework import serializers
 
 # Module imports
-from plane.db.models import Book, BookChapter
-from plane.utils.book_access import book_permissions
+from plane.db.models import Book, BookChapter, BookCollection
+from plane.utils.book_access import book_permissions, collection_permissions
 
 from .base import BaseSerializer
 
@@ -52,6 +52,7 @@ class BookSerializer(BaseSerializer):
     cover_url = serializers.SerializerMethodField()
     cover_thumbnail_url = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    owner_detail = serializers.SerializerMethodField()
 
     class Meta:
         model = Book
@@ -78,6 +79,8 @@ class BookSerializer(BaseSerializer):
             "subjects",
             "identifiers",
             "edited_fields",
+            "tags",
+            "owner_detail",
             "chapter_count",
             "character_count",
             "page_count",
@@ -98,6 +101,10 @@ class BookSerializer(BaseSerializer):
             object_name=key, expiration=settings.BOOK_SIGNED_URL_EXPIRATION, disposition="inline"
         )
 
+    def get_owner_detail(self, book):
+        owner = book.owner
+        return {"id": str(owner.id), "display_name": owner.display_name, "avatar_url": owner.avatar_url}
+
     def get_permissions(self, book):
         return book_permissions(book, self.context["request"].user, role=self.context.get("role"))
 
@@ -109,9 +116,18 @@ class BookSerializer(BaseSerializer):
 
 
 class BookDetailSerializer(BookSerializer):
+    collection_ids = serializers.SerializerMethodField()
+
     class Meta(BookSerializer.Meta):
-        fields = BookSerializer.Meta.fields + ["toc"]
+        fields = BookSerializer.Meta.fields + ["toc", "collection_ids"]
         read_only_fields = fields
+
+    def get_collection_ids(self, book):
+        """Collections of this book that the requesting user can see."""
+        visible = self.context.get("visible_collection_ids")
+        if visible is None:
+            return []
+        return [str(cid) for cid in book.collection_items.values_list("collection_id", flat=True) if cid in visible]
 
 
 class BookUpdateSerializer(serializers.Serializer):
@@ -130,6 +146,19 @@ class BookUpdateSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=10000, required=False, allow_blank=True)
     visibility = serializers.ChoiceField(choices=[Book.VISIBILITY_PERSONAL, Book.VISIBILITY_WORKSPACE], required=False)
     archived = serializers.BooleanField(required=False)
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=50, allow_blank=True), max_length=50, required=False, allow_empty=True
+    )
+
+    def validate_tags(self, value):
+        """Trimmed, without blanks, de-duplicated case-insensitively (first spelling wins)."""
+        seen, tags = set(), []
+        for tag in value:
+            tag = " ".join(tag.split())
+            if tag and tag.lower() not in seen:
+                seen.add(tag.lower())
+                tags.append(tag)
+        return tags
 
 
 class BookChapterSerializer(BaseSerializer):
@@ -137,3 +166,23 @@ class BookChapterSerializer(BaseSerializer):
         model = BookChapter
         fields = ["id", "index", "title", "href", "linear", "character_count"]
         read_only_fields = fields
+
+
+class BookCollectionSerializer(BaseSerializer):
+    permissions = serializers.SerializerMethodField()
+    book_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = BookCollection
+        fields = ["id", "workspace", "owner", "name", "description", "visibility", "sort_order", "book_count",
+                  "permissions", "created_at", "updated_at"]  # fmt: skip
+        read_only_fields = ["id", "workspace", "owner", "book_count", "permissions", "created_at", "updated_at"]
+
+    def validate_name(self, value):
+        value = " ".join(value.split())
+        if not value:
+            raise serializers.ValidationError("A collection needs a name.")
+        return value
+
+    def get_permissions(self, collection):
+        return collection_permissions(collection, self.context["request"].user, role=self.context.get("role"))
