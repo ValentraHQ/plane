@@ -516,3 +516,121 @@ def test_instance_config_exposes_the_library_flag(settings, api_client):
     )
     config = api_client.get("/api/instances/").json()["config"]
     assert config["is_library_enabled"] is True and config["book_file_size_limit"] == settings.BOOK_FILE_SIZE_LIMIT
+
+
+def chapter(workspace, owner_book, index, text, title=""):
+    return BookChapter.objects.create(
+        workspace=workspace,
+        book=owner_book,
+        index=index,
+        spine_id=f"c{index}",
+        href=f"c{index}.xhtml",
+        content_key=f"k{index}",
+        text=text,
+        title=title,
+        character_count=len(text),
+    )
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryReading:
+    def test_position_progress_and_status(self, library, people, workspace):
+        user, client = people["member"]
+        shared = book(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, status=Book.STATUS_READY, chapter_count=3)
+        state_url = url(workspace.slug, shared.id, "reading-state/")
+        assert client.get(state_url).json()["status"] == 0
+        saved = client.put(
+            state_url, {"position": {"chapter": 1, "offset": 120, "quote": "It was"}, "progress": 42.5}, format="json"
+        ).json()
+        assert saved["status"] == 1 and saved["progress"] == 42.5 and saved["position"]["chapter"] == 1
+        assert saved["last_opened_at"]
+        done = client.put(state_url, {"status": 2, "progress": 100}, format="json").json()
+        assert done["status"] == 2 and done["completed_at"]
+        reset = client.put(state_url, {"status": 0}, format="json").json()
+        assert reset == {**reset, "status": 0, "progress": 0, "position": {}, "completed_at": None}
+        # a chapter that does not exist is refused
+        assert client.put(state_url, {"position": {"chapter": 9, "offset": 0}}, format="json").status_code == 400
+        assert client.put(state_url, {"progress": 140}, format="json").status_code == 400
+
+    def test_reading_state_is_private(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        shared = book(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, status=Book.STATUS_READY, chapter_count=2)
+        client.put(
+            url(workspace.slug, shared.id, "reading-state/"),
+            {"position": {"chapter": 1, "offset": 5}, "progress": 70},
+            format="json",
+        )
+        # another member reading the same book starts from scratch and never sees the first one's progress
+        assert other_client.get(url(workspace.slug, shared.id, "reading-state/")).json()["progress"] == 0
+        listed = other_client.get(url(workspace.slug)).json()["results"]
+        assert next(b for b in listed if b["id"] == str(shared.id))["my_reading"]["progress"] == 0
+        mine = client.get(url(workspace.slug)).json()["results"]
+        assert next(b for b in mine if b["id"] == str(shared.id))["my_reading"]["progress"] == 70
+        assert client.get(url(workspace.slug, shared.id)).json()["my_reading"]["status"] == 1
+        # nobody can read or write state for a book they cannot see
+        private = book(workspace, user, status=Book.STATUS_READY, chapter_count=1)
+        assert other_client.get(url(workspace.slug, private.id, "reading-state/")).status_code == 404
+        assert (
+            other_client.put(
+                url(workspace.slug, private.id, "reading-state/"), {"progress": 1}, format="json"
+            ).status_code
+            == 404
+        )
+
+    def test_continue_reading_and_reading_filter(self, library, people, workspace):
+        user, client = people["member"]
+        reading = book(workspace, user, status=Book.STATUS_READY, chapter_count=2, title="Reading")
+        finished = book(workspace, user, status=Book.STATUS_READY, chapter_count=2, title="Finished")
+        archived = book(workspace, user, status=Book.STATUS_READY, chapter_count=2, title="Archived")
+        untouched = book(workspace, user, status=Book.STATUS_READY, chapter_count=2, title="Untouched")
+        for item in (reading, archived):
+            client.put(
+                url(workspace.slug, item.id, "reading-state/"),
+                {"position": {"chapter": 0, "offset": 1}, "progress": 10},
+                format="json",
+            )
+        client.put(url(workspace.slug, finished.id, "reading-state/"), {"status": 2}, format="json")
+        client.patch(url(workspace.slug, archived.id), {"archived": True}, format="json")
+        ids = [b["id"] for b in client.get(f"/api/workspaces/{workspace.slug}/library/continue-reading/").json()]
+        assert ids == [str(reading.id)]
+
+        def filtered(value):
+            return {b["id"] for b in client.get(url(workspace.slug), {"reading": value}).json()["results"]}
+
+        assert filtered("reading") == {str(reading.id)}
+        assert filtered("completed") == {str(finished.id)}
+        assert filtered("unread") == {str(untouched.id)}
+        # another member has their own (empty) list
+        assert people["other"][1].get(f"/api/workspaces/{workspace.slug}/library/continue-reading/").json() == []
+
+    def test_reader_preferences(self, library, people, workspace):
+        user, client = people["member"]
+        prefs_url = f"/api/workspaces/{workspace.slug}/library/reader-preferences/"
+        defaults = client.get(prefs_url).json()
+        assert defaults["theme"] == "light" and defaults["layout"] == "paginated"
+        saved = client.put(prefs_url, {"theme": "sepia", "font_size": 22}, format="json").json()
+        assert saved["theme"] == "sepia" and saved["font_size"] == 22 and saved["layout"] == "paginated"
+        assert client.put(prefs_url, {"font_size": 99}, format="json").status_code == 400
+        assert client.put(prefs_url, {"theme": "neon"}, format="json").status_code == 400
+        # preferences belong to the person
+        assert people["other"][1].get(prefs_url).json()["theme"] == "light"
+
+    def test_search_inside_a_book(self, library, people, workspace):
+        user, client = people["member"]
+        item = book(workspace, user, status=Book.STATUS_READY, chapter_count=2)
+        chapter(workspace, item, 0, "Alice was beginning to get very tired.\\nSo she was considering ALICE.", "One")
+        chapter(workspace, item, 1, "Down the rabbit-hole went Alice.", "Two")
+        search_url = url(workspace.slug, item.id, "search/")
+        found = client.get(search_url, {"q": "alice"}).json()
+        assert [(r["chapter"], r["occurrence"]) for r in found["results"]] == [(0, 0), (0, 1), (1, 0)]
+        first = found["results"][0]
+        assert (
+            first["match"] == "Alice"
+            and first["after"].startswith(" was beginning")
+            and first["chapter_title"] == "One"
+        )
+        assert client.get(search_url, {"q": "a"}).json()["results"] == []
+        assert client.get(search_url, {"q": "dragons"}).json()["results"] == []
+        assert people["other"][1].get(search_url, {"q": "alice"}).status_code == 404

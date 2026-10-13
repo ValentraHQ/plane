@@ -12,7 +12,7 @@ import { Badge } from "@makeplane/propel/components/badge";
 import { Button } from "@makeplane/propel/components/button";
 import { GlobeOutline, LockOutline } from "@makeplane/propel/icons";
 import { EmptyStateDetailed } from "@plane/blocks/empty-state";
-import { EBookStatus, EBookVisibility } from "@plane/types";
+import { EBookReadingStatus, EBookStatus, EBookVisibility } from "@plane/types";
 import { cn } from "@plane/utils";
 // hooks
 import { useLibrary } from "@/hooks/store/use-library";
@@ -52,6 +52,18 @@ export const BookCard = observer(function BookCard({ workspaceSlug, bookId }: Ca
           {bookTitle(book)}
         </Link>
         <span className="truncate text-12 text-tertiary">{bookAuthors(book)}</span>
+        {book.my_reading?.status === EBookReadingStatus.READING && (
+          <div
+            role="progressbar"
+            aria-label={`Read ${Math.round(book.my_reading.progress)}%`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(book.my_reading.progress)}
+            className="mt-1 h-1 overflow-hidden rounded-full bg-layer-3"
+          >
+            <div className="h-full bg-accent-primary" style={{ width: `${book.my_reading.progress}%` }} />
+          </div>
+        )}
         <span className="flex items-center gap-1.5 text-11 text-placeholder">
           {shared ? (
             <GlobeOutline className="size-3" aria-label="Shared with the workspace" />
@@ -60,6 +72,7 @@ export const BookCard = observer(function BookCard({ workspaceSlug, bookId }: Ca
           )}
           <span className="uppercase">{book.format}</span>
           {book.archived_at && <span>· Archived</span>}
+          {book.my_reading?.status === EBookReadingStatus.COMPLETED && <span>· Finished</span>}
         </span>
       </div>
     </li>
@@ -100,7 +113,12 @@ export const BookGrid = observer(function BookGrid({ workspaceSlug, onUpload, ca
   }, [fetchMoreBooks, hasMore, workspaceSlug, listIds.length]);
 
   const filtered =
-    !!filters.search || filters.visibility !== null || !!filters.format || !!filters.tag || !!filters.collection;
+    !!filters.search ||
+    filters.visibility !== null ||
+    !!filters.format ||
+    !!filters.tag ||
+    !!filters.collection ||
+    !!filters.reading;
 
   if (isLoading && listIds.length === 0) {
     return (
@@ -175,5 +193,38 @@ export const BookGrid = observer(function BookGrid({ workspaceSlug, onUpload, ca
       <div ref={sentinel} className="h-8" />
       {isLoadingMore && <p className="py-4 text-center text-12 text-tertiary">Loading more…</p>}
     </>
+  );
+});
+
+/** Books the user is in the middle of: one tap back to where they stopped. */
+export const ContinueReading = observer(function ContinueReading({ workspaceSlug }: { workspaceSlug: string }) {
+  const { continueReading } = useLibrary();
+  if (continueReading.length === 0) return null;
+  return (
+    <section aria-labelledby="continue-reading" className="flex flex-col gap-2">
+      <h2 id="continue-reading" className="text-13 font-semibold text-primary">
+        Continue reading
+      </h2>
+      <ul className="flex gap-4 overflow-x-auto pb-1">
+        {continueReading.slice(0, 8).map((book) => (
+          <li key={book.id} className="w-28 shrink-0">
+            <Link
+              href={`/${workspaceSlug}/library/books/${book.id}/read`}
+              className="flex flex-col gap-1.5 rounded-md focus-visible:outline-2 focus-visible:outline-accent-strong"
+              aria-label={`Continue reading ${bookTitle(book)}, ${Math.round(book.my_reading.progress)}%`}
+            >
+              <BookCover book={book} />
+              <span className="line-clamp-2 text-12 font-medium text-primary">{bookTitle(book)}</span>
+              <span className="flex items-center gap-1.5 text-11 text-tertiary">
+                <span className="h-1 flex-1 overflow-hidden rounded-full bg-layer-3">
+                  <span className="block h-full bg-accent-primary" style={{ width: `${book.my_reading.progress}%` }} />
+                </span>
+                {Math.round(book.my_reading.progress)}%
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 });

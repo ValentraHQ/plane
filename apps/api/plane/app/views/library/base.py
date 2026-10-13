@@ -18,7 +18,7 @@ from urllib.parse import unquote
 # Django imports
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -37,7 +37,15 @@ from plane.app.serializers.library import (
     BookUploadSerializer,
 )
 from plane.bgtasks.book_task import chapter_document, process_book, purge_book_files
-from plane.db.models import Book, BookChapter, BookCollectionItem, BookResource, FileAsset, Workspace
+from plane.db.models import (
+    Book,
+    BookChapter,
+    BookCollectionItem,
+    BookReadingState,
+    BookResource,
+    FileAsset,
+    Workspace,
+)
 from plane.settings.storage import S3Storage
 from plane.utils.book_access import book_permissions, library_role, viewable_books, viewable_collections
 
@@ -92,9 +100,12 @@ class LibraryBaseEndpoint(BaseAPIView):
     def context(self, request, role, **extra):
         return {"request": request, "role": role, "storage": S3Storage(request=request), **extra}
 
-    def detail_context(self, request, role):
+    def detail_context(self, request, role, book=None):
         visible = set(viewable_collections(self.workspace.id, request.user, role=role).values_list("id", flat=True))
-        return self.context(request, role, visible_collection_ids=visible)
+        states = {}
+        if book is not None:
+            states = {s.book_id: s for s in BookReadingState.objects.filter(user=request.user, book=book)}
+        return self.context(request, role, visible_collection_ids=visible, reading_states=states)
 
 
 class BookListEndpoint(LibraryBaseEndpoint):
@@ -113,6 +124,13 @@ class BookListEndpoint(LibraryBaseEndpoint):
         if params.get("format") in ("epub", "pdf"):
             books = books.filter(format=params["format"])
         books = books.filter(archived_at__isnull=params.get("archived") != "true")
+        reading = {"reading": BookReadingState.STATUS_READING, "completed": BookReadingState.STATUS_COMPLETED}
+        if params.get("reading") in ("reading", "completed", "unread"):
+            mine = BookReadingState.objects.filter(book=OuterRef("pk"), user=request.user)
+            if params["reading"] == "unread":
+                books = books.exclude(Exists(mine.exclude(status=BookReadingState.STATUS_UNREAD)))
+            else:
+                books = books.filter(Exists(mine.filter(status=reading[params["reading"]])))
         if params.get("tag"):
             books = books.filter(tags__contains=[params["tag"][:50]])
         if params.get("collection"):
@@ -141,13 +159,19 @@ class BookListEndpoint(LibraryBaseEndpoint):
         except ValueError:
             limit, offset = 50, 0
         total = books.count()
-        page = books[offset : offset + limit]
+        page = list(books[offset : offset + limit])
+        states = {
+            state.book_id: state
+            for state in BookReadingState.objects.filter(user=request.user, book_id__in=[b.id for b in page])
+        }
         return Response(
             {
                 "count": total,
                 "limit": limit,
                 "offset": offset,
-                "results": BookSerializer(page, many=True, context=self.context(request, role)).data,
+                "results": BookSerializer(
+                    page, many=True, context=self.context(request, role, reading_states=states)
+                ).data,
             }
         )
 
@@ -228,7 +252,7 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
         book, permissions = self.get_book(request, book_id, role)
         if book is None:
             return _not_found()
-        return Response(BookDetailSerializer(book, context=self.detail_context(request, role)).data)
+        return Response(BookDetailSerializer(book, context=self.detail_context(request, role, book)).data)
 
     def patch(self, request, slug, book_id):
         role, error = self.access(request)
@@ -276,7 +300,7 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
                     ).delete(soft=False)
         except IntegrityError:
             return Response({"error": "The same book is already in that library."}, status=status.HTTP_409_CONFLICT)
-        return Response(BookDetailSerializer(book, context=self.detail_context(request, role)).data)
+        return Response(BookDetailSerializer(book, context=self.detail_context(request, role, book)).data)
 
     def delete(self, request, slug, book_id):
         role, error = self.access(request)

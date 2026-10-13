@@ -6,13 +6,14 @@
 
 import { useState } from "react";
 import { observer } from "mobx-react";
+import Link from "next/link";
 import useSWR from "swr";
 // plane imports
 import { Button } from "@makeplane/propel/components/button";
 import { GlobeOutline, LockOutline } from "@makeplane/propel/icons";
 import { setToast } from "@plane/blocks/toast";
 import type { TBook, TBookTocEntry } from "@plane/types";
-import { EBookStatus, EBookVisibility } from "@plane/types";
+import { EBookReadingStatus, EBookStatus, EBookVisibility } from "@plane/types";
 import { renderFormattedDate } from "@plane/utils";
 // hooks
 import { useLibrary } from "@/hooks/store/use-library";
@@ -161,9 +162,21 @@ export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }
             {book.archived_at && <span>· Archived</span>}
           </div>
           <div className="flex flex-wrap gap-2">
+            {book.format === "epub" && book.status === EBookStatus.READY && (
+              <Link
+                href={`/${workspaceSlug}/library/books/${book.id}/read`}
+                className="inline-flex h-8 items-center rounded-md bg-accent-primary px-3 text-13 font-medium text-on-color hover:bg-accent-primary/90"
+              >
+                {book.my_reading?.status === EBookReadingStatus.READING
+                  ? `Continue reading · ${Math.round(book.my_reading.progress)}%`
+                  : book.my_reading?.status === EBookReadingStatus.COMPLETED
+                    ? "Read again"
+                    : "Read"}
+              </Link>
+            )}
             {book.permissions.can_download && book.status !== EBookStatus.UPLOADING && (
               <Button
-                variant="primary"
+                variant={book.format === "epub" && book.status === EBookStatus.READY ? "secondary" : "primary"}
                 size="md"
                 stretch="auto"
                 label="Download"

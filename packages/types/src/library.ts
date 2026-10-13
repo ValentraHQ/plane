@@ -38,6 +38,8 @@ export type TBook = {
   workspace: string;
   owner: string;
   owner_detail: { id: string; display_name: string; avatar_url: string | null };
+  /** the requesting user's own reading of the book */
+  my_reading: { progress: number; status: number; last_opened_at: string | null };
   visibility: EBookVisibility;
   format: TBookFormat;
   original_filename: string;
@@ -96,6 +98,8 @@ export type TBookFilters = {
   tag: string | null;
   collection: string | null;
   archived: boolean;
+  /** the requesting user's own reading status */
+  reading: "unread" | "reading" | "completed" | null;
   order_by: TBookOrderBy;
 };
 
@@ -128,3 +132,59 @@ export type TBookUploadReservation = {
   book: TBook;
   upload_data: { url: string; fields: Record<string, string> };
 };
+
+export enum EBookReadingStatus {
+  UNREAD = 0,
+  READING = 1,
+  COMPLETED = 2,
+}
+
+/** Where a reader is: a character offset into the chapter's text, with a little of the text for checking. */
+export type TBookPosition = { chapter: number; offset: number; quote?: string };
+
+export type TBookReadingState = {
+  position: TBookPosition | Record<string, never>;
+  progress: number;
+  status: EBookReadingStatus;
+  last_opened_at: string | null;
+  completed_at?: string | null;
+};
+
+export type TBookReadingStatePayload = Partial<{
+  position: TBookPosition;
+  progress: number;
+  status: EBookReadingStatus;
+  opened: boolean;
+}>;
+
+export type TReaderPreferences = {
+  font_family: "publisher" | "serif" | "sans" | "mono" | "dyslexic";
+  font_size: number;
+  line_height: number;
+  margin: "narrow" | "normal" | "wide";
+  theme: "light" | "dark" | "sepia" | "system";
+  layout: "paginated" | "scroll";
+};
+
+export type TBookChapterContent = {
+  index: number;
+  title: string;
+  html: string;
+  css: string;
+  previous: number | null;
+  next: number | null;
+  /** seconds until the image links in html/css expire */
+  expires_in: number;
+};
+
+export type TBookSearchResult = {
+  chapter: number;
+  chapter_title: string;
+  /** which occurrence of the text in that chapter (0-based) */
+  occurrence: number;
+  before: string;
+  match: string;
+  after: string;
+};
+
+export type TBookSearchResponse = { query: string; results: TBookSearchResult[]; truncated: boolean };

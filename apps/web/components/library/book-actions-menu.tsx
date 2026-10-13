@@ -12,6 +12,7 @@ import { IconButton } from "@makeplane/propel/components/icon-button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@makeplane/propel/components/menu";
 import {
   ArchiveOutline,
+  TickCircleOutline,
   DownloadOutline,
   EditOutline,
   GlobeOutline,
@@ -25,7 +26,7 @@ import {
 import { ConfirmDialog } from "@plane/blocks/dialog";
 import { setToast } from "@plane/blocks/toast";
 import type { TBook } from "@plane/types";
-import { EBookStatus, EBookVisibility } from "@plane/types";
+import { EBookReadingStatus, EBookStatus, EBookVisibility } from "@plane/types";
 // hooks
 import { useLibrary } from "@/hooks/store/use-library";
 import { useUser } from "@/hooks/store/user";
@@ -44,7 +45,7 @@ type Props = {
 
 export const BookActionsMenu = observer(function BookActionsMenu(props: Props) {
   const { workspaceSlug, book, onDeleted } = props;
-  const { updateBook, deleteBook, reprocessBook, downloadBook } = useLibrary();
+  const { updateBook, deleteBook, reprocessBook, downloadBook, setReadingStatus } = useLibrary();
   const { data: currentUser } = useUser();
   const [modal, setModal] = useState<"edit" | "collections" | "delete" | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -89,6 +90,28 @@ export const BookActionsMenu = observer(function BookActionsMenu(props: Props) {
                     title: "Error!",
                     message: libraryErrorMessage(error, "The download failed."),
                   })
+                )
+              }
+            />
+          )}
+          {book.status === EBookStatus.READY && (
+            <MenuItem
+              label={book.my_reading?.status === EBookReadingStatus.COMPLETED ? "Mark as unread" : "Mark as finished"}
+              icon={<Icon icon={TickCircleOutline} />}
+              onClick={() =>
+                void run(
+                  () =>
+                    setReadingStatus(
+                      workspaceSlug,
+                      book.id,
+                      book.my_reading?.status === EBookReadingStatus.COMPLETED
+                        ? EBookReadingStatus.UNREAD
+                        : EBookReadingStatus.COMPLETED
+                    ),
+                  book.my_reading?.status === EBookReadingStatus.COMPLETED
+                    ? "Marked as unread."
+                    : "Marked as finished.",
+                  "The reading status could not be changed."
                 )
               }
             />

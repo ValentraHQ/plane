@@ -13,7 +13,7 @@ from django.conf import settings
 from rest_framework import serializers
 
 # Module imports
-from plane.db.models import Book, BookChapter, BookCollection
+from plane.db.models import Book, BookChapter, BookCollection, BookReadingState
 from plane.utils.book_access import book_permissions, collection_permissions
 
 from .base import BaseSerializer
@@ -53,6 +53,7 @@ class BookSerializer(BaseSerializer):
     cover_thumbnail_url = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display", read_only=True)
     owner_detail = serializers.SerializerMethodField()
+    my_reading = serializers.SerializerMethodField()
 
     class Meta:
         model = Book
@@ -81,6 +82,7 @@ class BookSerializer(BaseSerializer):
             "edited_fields",
             "tags",
             "owner_detail",
+            "my_reading",
             "chapter_count",
             "character_count",
             "page_count",
@@ -100,6 +102,13 @@ class BookSerializer(BaseSerializer):
         return storage.generate_presigned_url(
             object_name=key, expiration=settings.BOOK_SIGNED_URL_EXPIRATION, disposition="inline"
         )
+
+    def get_my_reading(self, book):
+        """The requesting user's own progress; views pass their states in the context (one query)."""
+        state = (self.context.get("reading_states") or {}).get(book.id)
+        if state is None:
+            return {"progress": 0, "status": BookReadingState.STATUS_UNREAD, "last_opened_at": None}
+        return {"progress": state.progress, "status": state.status, "last_opened_at": state.last_opened_at}
 
     def get_owner_detail(self, book):
         owner = book.owner
@@ -186,3 +195,40 @@ class BookCollectionSerializer(BaseSerializer):
 
     def get_permissions(self, collection):
         return collection_permissions(collection, self.context["request"].user, role=self.context.get("role"))
+
+
+class BookPositionSerializer(serializers.Serializer):
+    chapter = serializers.IntegerField(min_value=0)
+    offset = serializers.IntegerField(min_value=0, max_value=50_000_000)
+    quote = serializers.CharField(max_length=200, allow_blank=True, required=False, default="")
+
+
+class BookReadingStateSerializer(serializers.Serializer):
+    """PUT payload: any of position / progress / status; `opened` marks the book as just opened."""
+
+    position = BookPositionSerializer(required=False)
+    progress = serializers.FloatField(min_value=0, max_value=100, required=False)
+    status = serializers.ChoiceField(
+        choices=[BookReadingState.STATUS_UNREAD, BookReadingState.STATUS_READING, BookReadingState.STATUS_COMPLETED],
+        required=False,
+    )
+    opened = serializers.BooleanField(required=False, default=False)
+
+
+READER_DEFAULTS = {
+    "font_family": "publisher",
+    "font_size": 18,
+    "line_height": 1.6,
+    "margin": "normal",
+    "theme": "light",
+    "layout": "paginated",
+}
+
+
+class ReaderPreferencesSerializer(serializers.Serializer):
+    font_family = serializers.ChoiceField(choices=["publisher", "serif", "sans", "mono", "dyslexic"], required=False)
+    font_size = serializers.IntegerField(min_value=12, max_value=32, required=False)
+    line_height = serializers.FloatField(min_value=1.0, max_value=2.4, required=False)
+    margin = serializers.ChoiceField(choices=["narrow", "normal", "wide"], required=False)
+    theme = serializers.ChoiceField(choices=["light", "dark", "sepia", "system"], required=False)
+    layout = serializers.ChoiceField(choices=["paginated", "scroll"], required=False)

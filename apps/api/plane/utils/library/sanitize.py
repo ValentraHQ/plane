@@ -124,6 +124,9 @@ def strip_namespaces(root):
                 value = element.attrib.pop(key)
                 if key == "{http://www.w3.org/XML/1998/namespace}lang":
                     element.set("lang", value)
+                elif key == "{http://www.w3.org/1999/xlink}href" and element.get("href") is None:
+                    # SVG images (cover pages) and old-style links point with xlink:href
+                    element.set("href", value)
     etree.cleanup_namespaces(root)
 
 
