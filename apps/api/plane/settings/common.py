@@ -348,9 +348,28 @@ CELERY_IMPORTS = (
     # issue version tasks
     "plane.bgtasks.issue_version_sync",
     "plane.bgtasks.issue_description_version_sync",
+    # library: book processing
+    "plane.bgtasks.book_task",
 )
 
 FILE_SIZE_LIMIT = int(os.environ.get("FILE_SIZE_LIMIT", 5242880))
+
+# Library (eBooks). Off unless LIBRARY_ENABLED=1; see docs/library.md before enabling.
+LIBRARY_ENABLED = os.environ.get("LIBRARY_ENABLED", "0") == "1"
+# upload limit for book files only; ordinary uploads keep FILE_SIZE_LIMIT
+BOOK_FILE_SIZE_LIMIT = int(os.environ.get("BOOK_FILE_SIZE_LIMIT", 100 * 1024 * 1024))
+# EPUB archive limits, checked while unpacking (zip bombs, archive abuse)
+BOOK_MAX_ARCHIVE_ENTRIES = int(os.environ.get("BOOK_MAX_ARCHIVE_ENTRIES", 10000))
+BOOK_MAX_UNPACKED_SIZE = int(os.environ.get("BOOK_MAX_UNPACKED_SIZE", 512 * 1024 * 1024))
+BOOK_MAX_ENTRY_SIZE = int(os.environ.get("BOOK_MAX_ENTRY_SIZE", 64 * 1024 * 1024))
+BOOK_MAX_COMPRESSION_RATIO = int(os.environ.get("BOOK_MAX_COMPRESSION_RATIO", 100))
+BOOK_MAX_CHAPTERS = int(os.environ.get("BOOK_MAX_CHAPTERS", 5000))
+# processing attempts for transient failures (storage / network); invalid books fail at once
+BOOK_PROCESSING_MAX_RETRIES = int(os.environ.get("BOOK_PROCESSING_MAX_RETRIES", 3))
+# lifetime of signed links to book files, covers and chapter resources
+BOOK_SIGNED_URL_EXPIRATION = int(os.environ.get("BOOK_SIGNED_URL_EXPIRATION", 600))
+# longest excerpt that can be copied from a book into a shared wiki page
+BOOK_EXCERPT_LIMIT = int(os.environ.get("BOOK_EXCERPT_LIMIT", 1500))
 
 # Unsplash Access key
 UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")
