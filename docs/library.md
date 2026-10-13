@@ -8,8 +8,35 @@ Workspace members can upload EPUB and PDF books to a personal library or to the 
 EPUBs are processed in the background into sanitized chapters for the in-browser reader. PDFs are
 stored with their metadata and can be downloaded; reading PDFs in the browser comes in a later PR.
 
-This document covers the foundation (PR 1 of the library series) and the library UI (PR 2). The
-reader, annotations, wiki integration and search follow in later PRs.
+This document covers the foundation (PR 1 of the library series), the library UI (PR 2) and the
+reader (PR 3). Annotations, wiki integration and search across books follow in later PRs.
+
+## Reading (web)
+
+**Read** on an EPUB's page (or _Continue reading · 42%_, or _Read again_) opens the reader at
+`/library/books/<id>/read`. The library shows a **Continue reading** row, progress bars on the cards
+and a _Reading_ filter (_Not started_, _Reading_, _Finished_). The book menu has _Mark as finished_ /
+_Mark as unread_.
+
+- **One chapter at a time.** The next chapter is fetched in advance, so a 1,000-chapter book opens as quickly as a short one. A chapter is fetched again a minute before its image links expire.
+- **Isolation.** Each chapter is rendered in an `<iframe sandbox="allow-same-origin">` (no scripts, forms, pop-ups or top navigation) with its own Content-Security-Policy: `default-src 'none'`, images only from the origins of the book's signed links, inline styles, and nothing else. This is a second line of defense behind the server-side sanitizing.
+- **Links.** Internal links (`plane-chapter:`) open the chapter in the reader. `http(s)` and `mailto` links open in a new tab with `noopener,noreferrer`.
+- **Layout and settings.** Pages (CSS columns: one column per page, so a page turn is exactly one frame width) or Scroll.
+  - Themes: Light, Sepia, Dark and Auto (follows the app). The theme overrides the book's colours, so text is always readable.
+  - Text size 12–32 px, the book's own font or Serif / Sans-serif / Monospace / Dyslexia-friendly, line spacing, and margins.
+  - Settings are applied in place (no reload, no lost place) and saved per person for every device (`reader-preferences/`).
+- **Navigation.**
+  - keyboard: ←/→, PageUp/PageDown, Space and Shift+Space, Esc to close panels
+  - mouse: arrow buttons beside the page
+  - touch: tap the left or right quarter of the page, or swipe
+  - contents panel, search panel, full screen
+  - on phones the app sidebar closes so the book gets the whole width
+- **Search inside the book.** Matches across chapters with snippets. A result opens its chapter at that occurrence, with the text selected.
+- **Position and progress.**
+  - The position is a character offset into the chapter's text plus a short quote, so it survives font, size, margin and window changes. It is saved 1.5 s after each move and again (with `fetch(..., {keepalive: true})`) when the tab is hidden or closed.
+  - Progress is the share of the book's characters before the reading point.
+  - Reaching the end of the last chapter marks the book finished.
+  - Reading state is private: nobody else sees your position, progress or status.
 
 ## Using the library (web)
 
@@ -122,24 +149,28 @@ The stored chapters contain `plane-res:` placeholders, which the chapter endpoin
 
 All endpoints are under `/api/workspaces/<slug>/library/`. They return 404 when the library is disabled.
 
-| Method               | Path                                |                                                                                                                                                                                                                                 |
-| -------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET                  | `books/`                            | List: `search` (title, author, ISBN, publisher), `visibility`, `status`, `format`, `archived=true`, `order_by` (`created_at`, `title`, `updated_at`, `-…`), `limit` ≤ 100, `offset`. Returns `{count, limit, offset, results}`. |
-| POST                 | `books/`                            | Reserve an upload; returns `{book, upload_data}`.                                                                                                                                                                               |
-| GET / PATCH / DELETE | `books/<id>/`                       | Detail (with `toc`); PATCH takes the metadata fields, `visibility` and `archived`.                                                                                                                                              |
-| POST                 | `books/<id>/upload-complete/`       | Start processing after the upload.                                                                                                                                                                                              |
-| POST                 | `books/<id>/reprocess/`             | Process again (owner / admin).                                                                                                                                                                                                  |
-| GET                  | `books/<id>/download/`              | `{url, expires_in}`: a signed link to the original file.                                                                                                                                                                        |
-| GET                  | `books/<id>/chapters/`              | `[{id, index, title, href, linear, character_count}]`                                                                                                                                                                           |
-| GET                  | `books/<id>/chapters/<index>/`      | `{index, title, html, css, previous, next, expires_in}` for the reader.                                                                                                                                                         |
-| GET                  | `tags/`                             | `[{name, count}]` across the books the user can see.                                                                                                                                                                            |
-| GET / POST           | `collections/`                      | The user's visible collections (with `book_count` and `permissions`); create `{name, description, visibility}`.                                                                                                                 |
-| PATCH / DELETE       | `collections/<id>/`                 | Owner or workspace admin; only the owner changes `visibility`, and a collection holding personal books cannot be shared.                                                                                                        |
-| POST                 | `collections/<id>/books/`           | `{book_ids: [...]}` (at most 200): adds books the user can see. Personal books cannot go into a shared collection.                                                                                                              |
-| DELETE               | `collections/<id>/books/<book_id>/` | Removes one book.                                                                                                                                                                                                               |
+| Method               | Path                                |                                                                                                                                                                                                                                              |
+| -------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET                  | `books/`                            | List: `search` (title, author, ISBN, publisher), `visibility`, `status`, `format`, `archived=true`, `order_by` (`created_at`, `title`, `updated_at`, `-…`), `limit` ≤ 100, `offset`. Returns `{count, limit, offset, results}`.              |
+| POST                 | `books/`                            | Reserve an upload; returns `{book, upload_data}`.                                                                                                                                                                                            |
+| GET / PATCH / DELETE | `books/<id>/`                       | Detail (with `toc`); PATCH takes the metadata fields, `visibility` and `archived`.                                                                                                                                                           |
+| POST                 | `books/<id>/upload-complete/`       | Start processing after the upload.                                                                                                                                                                                                           |
+| POST                 | `books/<id>/reprocess/`             | Process again (owner / admin).                                                                                                                                                                                                               |
+| GET                  | `books/<id>/download/`              | `{url, expires_in}`: a signed link to the original file.                                                                                                                                                                                     |
+| GET                  | `books/<id>/chapters/`              | `[{id, index, title, href, linear, character_count}]`                                                                                                                                                                                        |
+| GET                  | `books/<id>/chapters/<index>/`      | `{index, title, html, css, previous, next, expires_in}` for the reader.                                                                                                                                                                      |
+| GET / PUT            | `books/<id>/reading-state/`         | The user's own `{position: {chapter, offset, quote}, progress, status, last_opened_at, completed_at}`. PUT takes any of `position`, `progress` (0–100), `status` (0 unread, 1 reading, 2 finished; unread clears the position) and `opened`. |
+| GET                  | `books/<id>/search/?q=`             | `{query, results: [{chapter, chapter_title, occurrence, before, match, after}], truncated}`: at most 25 per chapter and 100 in total, case-insensitive, at least 2 characters.                                                               |
+| GET                  | `continue-reading/`                 | Books the user is reading (ready, not archived, still visible to them), most recently opened first, at most 12.                                                                                                                              |
+| GET / PUT            | `reader-preferences/`               | `{font_family, font_size, line_height, margin, theme, layout}`, the same on every device.                                                                                                                                                    |
+| GET                  | `tags/`                             | `[{name, count}]` across the books the user can see.                                                                                                                                                                                         |
+| GET / POST           | `collections/`                      | The user's visible collections (with `book_count` and `permissions`); create `{name, description, visibility}`.                                                                                                                              |
+| PATCH / DELETE       | `collections/<id>/`                 | Owner or workspace admin; only the owner changes `visibility`, and a collection holding personal books cannot be shared.                                                                                                                     |
+| POST                 | `collections/<id>/books/`           | `{book_ids: [...]}` (at most 200): adds books the user can see. Personal books cannot go into a shared collection.                                                                                                                           |
+| DELETE               | `collections/<id>/books/<book_id>/` | Removes one book.                                                                                                                                                                                                                            |
 
-The book list also takes `tag=<name>` and `collection=<id>`, and its search also matches tags. Book
-objects include `tags` and `owner_detail`, and the detail view adds the `collection_ids` the user can
+The book list also takes `reading=unread|reading|completed` (the user's own status), `tag=<name>` and `collection=<id>`, and its search also matches tags. Book
+objects include `tags`, `owner_detail` and the user's own `my_reading` (`{progress, status, last_opened_at}`), and the detail view adds the `collection_ids` the user can
 see. PATCH also takes `tags`. The instance config (`/api/instances/`) reports `is_library_enabled` and
 `book_file_size_limit`.
 
@@ -194,7 +225,10 @@ up to one extra processed copy exists. Deleted books are purged from storage in 
 1. Check free space on the object store (and on the Docker host, if MinIO runs there).
 2. Set `BOOK_FILE_SIZE_LIMIT` on the API, the worker and the proxy, and keep it ≥ `FILE_SIZE_LIMIT`.
 3. Set `LIBRARY_ENABLED=1` on the API and the worker.
-4. Watch usage with `python manage.py library_storage_report`. It reads the database and is fast; `--storage` measures the bucket itself by listing every object.
+4. After upgrading the processor, re-process books made by an older version:
+   `python manage.py library_reprocess --outdated` (also `--failed`, `--book <id>…` and `--dry-run`).
+   Version 2 keeps SVG cover images that use only `xlink:href`, such as Project Gutenberg cover pages.
+5. Watch usage with `python manage.py library_storage_report`. It reads the database and is fast; `--storage` measures the bucket itself by listing every object.
 
 _The ValentraHQ VM had 28 GB (19%) disk free when this was written, shared with Docker images and the
 live Plane install. Free space before inviting real libraries._
@@ -203,7 +237,9 @@ live Plane install. Free space before inviting real libraries._
 
 Migration `0126_library_books` creates three new tables and changes no existing ones. Migration
 `0127_library_tags_collections` adds `books.tags` (a JSON list) and two tables, `book_collections`
-and `book_collection_items`.
+and `book_collection_items`. Migration `0128_library_reading`
+adds `book_reading_states` (book, user, position, progress, status, last opened, completed; unique per
+book and user) and `reader_preferences` (one row per user).
 
 - **`books`:** owner, workspace, visibility, format, the original file (a `FileAsset` of type `BOOK_FILE`), size, SHA-256, processing state (status, token, attempts, processor version, storage prefix), metadata, `edited_fields`, covers, TOC, counts, `archived_at`.
 - **`book_chapters`:** index, spine id and path, title, storage key of the sanitized chapter, plain text (used later for search and excerpts), `linear`.
