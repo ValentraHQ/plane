@@ -137,6 +137,13 @@ class BookListEndpoint(LibraryBaseEndpoint):
         if visibility == Book.VISIBILITY_PERSONAL:
             duplicate = duplicate.filter(owner=request.user)
         duplicate = duplicate.first()
+        if duplicate and duplicate.status == Book.STATUS_UPLOADING and duplicate.owner_id == request.user.id:
+            # the user's own unfinished upload of this file (e.g. the browser was closed): start over
+            abandoned_id = str(duplicate.id)
+            with transaction.atomic():
+                duplicate.delete()
+                transaction.on_commit(lambda: purge_book_files.delay(abandoned_id))
+            duplicate = None
         if duplicate:
             return Response(
                 {"error": "This book is already in the library.", "book_id": str(duplicate.id)},

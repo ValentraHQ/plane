@@ -187,6 +187,8 @@ class TestLibraryUpload:
         user, client = people["member"]
         payload = {"name": "b.epub", "size": 10, "sha256": HASH}
         assert client.post(url(workspace.slug), payload, format="json").status_code == 201
+        # once uploaded, the same file is a duplicate (an unfinished upload would be replaced instead)
+        Book.objects.filter(owner=user).update(status=Book.STATUS_READY)
         duplicate = client.post(url(workspace.slug), payload, format="json")
         assert duplicate.status_code == 409 and duplicate.json()["book_id"]
         # someone else's personal library may hold the same file
@@ -194,7 +196,25 @@ class TestLibraryUpload:
         # once in the workspace library
         shared = {**payload, "visibility": 1}
         assert client.post(url(workspace.slug), shared, format="json").status_code == 201
+        Book.objects.filter(visibility=Book.VISIBILITY_WORKSPACE).update(status=Book.STATUS_READY)
         assert people["other"][1].post(url(workspace.slug), shared, format="json").status_code == 409
+
+    def test_an_abandoned_upload_does_not_block_a_retry(
+        self, library, people, workspace, django_capture_on_commit_callbacks
+    ):
+        user, client = people["member"]
+        payload = {"name": "b.epub", "size": 10, "sha256": HASH, "visibility": 1}
+        first = client.post(url(workspace.slug), payload, format="json").json()["book"]["id"]
+        # someone else's unfinished upload still counts as the workspace copy
+        assert people["other"][1].post(url(workspace.slug), payload, format="json").status_code == 409
+        with django_capture_on_commit_callbacks(execute=True):
+            retry = client.post(url(workspace.slug), payload, format="json")
+        assert retry.status_code == 201 and retry.json()["book"]["id"] != first
+        assert Book.all_objects.get(pk=first).deleted_at is not None
+        assert library["calls"]["purge"] == [(first,)]
+        # a finished book is still a real duplicate
+        Book.objects.filter(pk=retry.json()["book"]["id"]).update(status=Book.STATUS_READY)
+        assert client.post(url(workspace.slug), payload, format="json").status_code == 409
 
     def test_making_a_duplicate_shared_is_refused(self, library, people, workspace):
         user, client = people["member"]
