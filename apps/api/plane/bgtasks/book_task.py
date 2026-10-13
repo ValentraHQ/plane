@@ -44,7 +44,8 @@ from plane.utils.library.pdf import read_pdf
 logger = logging.getLogger("plane.worker")
 
 # bump when processing changes in a way that should apply to existing books (see `reprocess`)
-PROCESSOR_VERSION = 1
+# 2: SVG images that use xlink:href only (e.g. Project Gutenberg cover pages) are kept
+PROCESSOR_VERSION = 2
 COVER_SIZE = (1200, 1800)
 THUMBNAIL_SIZE = (300, 450)
 TRANSIENT_ERRORS = (ClientError, BotoCoreError, ConnectionError, TimeoutError)

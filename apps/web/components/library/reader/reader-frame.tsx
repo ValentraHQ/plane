@@ -108,7 +108,8 @@ function buildDocument(chapter: TBookChapterContent) {
   }
   const csp = [
     "default-src 'none'",
-    `img-src ${[...origins].join(" ") || "'none'"} data:`,
+    // 'none' may not be combined with other sources
+    `img-src ${[...origins, "data:"].join(" ")}`,
     "style-src 'unsafe-inline'",
     "font-src 'none'",
     "media-src 'none'",

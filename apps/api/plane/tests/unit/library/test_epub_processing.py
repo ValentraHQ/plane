@@ -331,6 +331,16 @@ class TestContentSanitizing:
         assert '<img src="plane-res:OEBPS/images/cover.jpg"' in doc["html"]
         assert "<svg" not in doc["html"]
 
+    def test_svg_cover_page_with_xlink_href_only(self):
+        # Project Gutenberg's cover pages use xlink:href and no plain href
+        chapter = b"""<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <div class="cover"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+        viewBox="0 0 800 1104"><image width="800" height="1104" xlink:href="../images/cover.jpg"/></svg></div>
+        </body></html>"""
+        book = open_book(make_epub(**{"OEBPS/text/ch2.xhtml": chapter}))
+        doc = chapters_of(book)[1][1]
+        assert '<img src="plane-res:OEBPS/images/cover.jpg"' in doc["html"]
+
     def test_css_sanitizer(self):
         css = sanitize_css(
             """@import "https://evil.example/a.css";
