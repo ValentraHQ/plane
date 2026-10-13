@@ -1,5 +1,13 @@
 (plane_proxy) {
-	request_body {
+	# Uploads to storage use signed links whose policy caps each file's size (FILE_SIZE_LIMIT for
+	# ordinary files, BOOK_FILE_SIZE_LIMIT for library books), so the storage route allows the
+	# larger book limit. Every other route keeps FILE_SIZE_LIMIT.
+	@storage path /{$BUCKET_NAME} /{$BUCKET_NAME}/*
+	request_body @storage {
+		max_size {$BOOK_FILE_SIZE_LIMIT:104857600}
+	}
+	@not_storage not path /{$BUCKET_NAME} /{$BUCKET_NAME}/*
+	request_body @not_storage {
 		max_size {$FILE_SIZE_LIMIT}
 	}
 

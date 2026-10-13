@@ -76,6 +76,10 @@ dependencies = [
     "drf-spectacular==0.29.0",
     # html sanitizer
     "nh3==0.2.18",
+    # library: book cover re-encoding / thumbnails
+    "Pillow==12.3.0",
+    # library: PDF metadata
+    "pypdf==6.19.0",
 ]
 
 [dependency-groups]
