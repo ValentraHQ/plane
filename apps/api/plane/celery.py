@@ -64,6 +64,10 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.exporter_expired_task.delete_old_s3_link",
         "schedule": crontab(hour=1, minute=30),  # UTC 01:30
     },
+    "check-every-day-to-delete-abandoned-book-uploads": {
+        "task": "plane.bgtasks.book_task.delete_abandoned_uploads",
+        "schedule": crontab(hour=2, minute=15),  # UTC 02:15
+    },
     "check-every-day-to-delete-file-asset": {
         "task": "plane.bgtasks.file_asset_task.delete_unuploaded_file_asset",
         "schedule": crontab(hour=2, minute=0),  # UTC 02:00

@@ -111,9 +111,9 @@ export const BookGrid = observer(function BookGrid({ workspaceSlug, onUpload, ca
       >
         {Array.from({ length: 12 }, (_, i) => (
           <li key={i} className="flex flex-col gap-2">
-            <div className="aspect-[2/3] w-full animate-pulse rounded-md bg-layer-2" />
-            <div className="h-3 w-3/4 animate-pulse rounded-sm bg-layer-2" />
-            <div className="h-3 w-1/2 animate-pulse rounded-sm bg-layer-2" />
+            <div className="aspect-[2/3] w-full animate-pulse rounded-md bg-layer-3" />
+            <div className="h-3 w-3/4 animate-pulse rounded-sm bg-layer-3" />
+            <div className="h-3 w-1/2 animate-pulse rounded-sm bg-layer-3" />
           </li>
         ))}
       </ul>

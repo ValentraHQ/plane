@@ -12,6 +12,7 @@ library is disabled (LIBRARY_ENABLED).
 import os
 import re
 import uuid
+from datetime import timedelta
 from urllib.parse import unquote
 
 # Django imports
@@ -42,6 +43,8 @@ from plane.utils.book_access import book_permissions, library_role, viewable_boo
 
 from ..base import BaseAPIView
 
+# how long an unfinished upload is listed (the upload itself usually takes seconds)
+UPLOAD_GRACE = timedelta(hours=1)
 ORDER_BY = {"-created_at", "created_at", "title", "-title", "-updated_at", "updated_at"}
 RESOURCE_PLACEHOLDER = re.compile(r"plane-res:([A-Za-z0-9._~/%!$&'*+,;=@-]+)")
 
@@ -100,6 +103,8 @@ class BookListEndpoint(LibraryBaseEndpoint):
         if error:
             return error
         books = viewable_books(self.workspace.id, request.user, role=role).select_related("owner")
+        # unfinished uploads are not books yet; recent ones stay visible while they complete
+        books = books.exclude(status=Book.STATUS_UPLOADING, created_at__lt=timezone.now() - UPLOAD_GRACE)
         params = request.query_params
         if params.get("visibility") in ("0", "1"):
             books = books.filter(visibility=int(params["visibility"]))

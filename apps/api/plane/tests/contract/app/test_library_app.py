@@ -263,6 +263,18 @@ class TestLibraryManagement:
         assert mine.title == "New" and mine.authors == ["A", "B"]
         assert set(mine.edited_fields) == {"title", "authors"}
 
+    def test_stale_unfinished_uploads_are_not_listed(self, library, people, workspace):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        user, client = people["member"]
+        fresh = book(workspace, user, status=Book.STATUS_UPLOADING)
+        stale = book(workspace, user, status=Book.STATUS_UPLOADING)
+        Book.objects.filter(pk=stale.id).update(created_at=timezone.now() - timedelta(hours=2))
+        ids = [b["id"] for b in client.get(url(workspace.slug)).json()["results"]]
+        assert str(fresh.id) in ids and str(stale.id) not in ids
+
     def test_archive_filter_and_search(self, library, people, workspace):
         user, client = people["member"]
         kept = book(workspace, user, title="Dune", authors=["Frank Herbert"])
