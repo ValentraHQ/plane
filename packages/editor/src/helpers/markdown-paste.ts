@@ -20,8 +20,8 @@ const BLOCK_PATTERNS = [
 // inline markdown: bold, links, inline code
 const INLINE_PATTERNS = [/\*\*[^*\n]+\*\*/, /\[[^\]\n]+\]\([^)\s]+\)/, /`[^`\n]+`/];
 
-// tags that carry real formatting: if the copied HTML has any, it is pasted as HTML
-const FORMATTING_SELECTOR = "h1,h2,h3,h4,h5,h6,strong,em,u,s,a[href],ul,ol,li,table,img,blockquote,hr";
+// elements that end a line when the HTML is read as text
+const LINE_BREAK_SELECTOR = "br,div,p,li,tr,pre,h1,h2,h3,h4,h5,h6,blockquote";
 
 export const looksLikeMarkdown = (text: string): boolean => {
   const blocks = BLOCK_PATTERNS.filter((pattern) => pattern.test(text)).length;
@@ -29,11 +29,16 @@ export const looksLikeMarkdown = (text: string): boolean => {
   return blocks >= 1 && blocks + inline >= 2;
 };
 
-/** HTML that is only the plain text wrapped in divs / spans / pre (code editors, raw-file views). */
-const isPlainHtml = (html: string): boolean => {
+/**
+ * Whether the copied HTML is markdown *source* (a code editor, a raw file, a text area) rather than
+ * a rendering of it. A rendered view never shows `##`, `|---|` or `**` in its text; a source view
+ * does, whatever tags it wraps the lines in.
+ */
+const isMarkdownSourceHtml = (html: string): boolean => {
   if (!html) return true;
   const doc = new DOMParser().parseFromString(html, "text/html");
-  return !doc.body.querySelector(FORMATTING_SELECTOR);
+  doc.body.querySelectorAll(LINE_BREAK_SELECTOR).forEach((element) => element.after("\n"));
+  return looksLikeMarkdown(doc.body.textContent ?? "");
 };
 
 const isMarkdownSource = (view: EditorView, data: DataTransfer, text: string): boolean => {
@@ -51,7 +56,7 @@ const isMarkdownSource = (view: EditorView, data: DataTransfer, text: string): b
       return false;
     }
   }
-  return isPlainHtml(data.getData("text/html"));
+  return isMarkdownSourceHtml(data.getData("text/html"));
 };
 
 /**
