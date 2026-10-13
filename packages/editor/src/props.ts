@@ -8,6 +8,7 @@ import type { EditorProps } from "@tiptap/pm/view";
 // plane utils
 import { cn } from "@plane/utils";
 // helpers
+import { getMarkdownToPaste } from "@/helpers/markdown-paste";
 import { processAssetDuplication } from "@/helpers/paste-asset";
 
 type TArgs = {
@@ -39,7 +40,13 @@ export const CoreEditorProps = (props: TArgs): EditorProps => {
       if (!event.clipboardData) return false;
 
       const htmlContent = event.clipboardData.getData("text/plane-editor-html");
-      if (!htmlContent) return false;
+      if (!htmlContent) {
+        // markdown copied with wrapper-only HTML: parse the text as markdown instead
+        const html = getMarkdownToPaste(view, event);
+        if (html === null) return false;
+        // no event: the synthetic paste has no clipboard data, so this handler is not re-entered
+        return view.pasteHTML(html);
+      }
 
       const { processedHtml } = processAssetDuplication(htmlContent);
       view.pasteHTML(processedHtml);
