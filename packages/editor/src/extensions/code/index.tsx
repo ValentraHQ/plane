@@ -17,7 +17,10 @@ lowlight.register("ts", ts);
 
 export const CustomCodeBlockExtension = CodeBlockLowlight.extend({
   addNodeView() {
-    return ReactNodeViewRenderer(CodeBlockComponent);
+    return ReactNodeViewRenderer(CodeBlockComponent, {
+      // clicks on a diagram's buttons must not move the editor cursor into its hidden source
+      stopEvent: ({ event }) => event.target instanceof Element && !!event.target.closest("[data-mermaid-controls]"),
+    });
   },
 
   addKeyboardShortcuts() {
