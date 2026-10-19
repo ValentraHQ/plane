@@ -107,7 +107,12 @@ type PopoverProps = {
 
 export function AnnotationPopover({ annotation, box, canShare, isNew, onSave, onDelete, onClose }: PopoverProps) {
   const [note, setNote] = useState(annotation.note);
+  // colour and sharing change at once; the saved annotation follows
+  const [color, setColor] = useState(annotation.color);
+  const [visibility, setVisibility] = useState(annotation.visibility);
   useEffect(() => setNote(annotation.note), [annotation.id, annotation.note]);
+  useEffect(() => setColor(annotation.color), [annotation.id, annotation.color]);
+  useEffect(() => setVisibility(annotation.visibility), [annotation.id, annotation.visibility]);
   const editable = annotation.permissions.can_edit;
   const width = 320;
   const position = box ? placement(box, width, 260) : { left: window.innerWidth / 2 - width / 2, top: 120 };
@@ -125,7 +130,14 @@ export function AnnotationPopover({ annotation, box, canShare, isNew, onSave, on
       </blockquote>
       {!editable && <p className="text-11 text-tertiary">Shared by {annotation.user_detail.display_name}</p>}
       {editable && annotation.kind === "highlight" && (
-        <ColorDots value={annotation.color} onPick={(color) => onSave({ color })} label="Colour" />
+        <ColorDots
+          value={color}
+          onPick={(picked) => {
+            setColor(picked);
+            onSave({ color: picked });
+          }}
+          label="Colour"
+        />
       )}
       {editable ? (
         <label className="flex flex-col gap-1">
@@ -148,12 +160,12 @@ export function AnnotationPopover({ annotation, box, canShare, isNew, onSave, on
         <label className="flex items-center gap-2 text-12 text-secondary">
           <input
             type="checkbox"
-            checked={annotation.visibility === EBookAnnotationVisibility.SHARED}
-            onChange={(e) =>
-              onSave({
-                visibility: e.target.checked ? EBookAnnotationVisibility.SHARED : EBookAnnotationVisibility.PRIVATE,
-              })
-            }
+            checked={visibility === EBookAnnotationVisibility.SHARED}
+            onChange={(e) => {
+              const picked = e.target.checked ? EBookAnnotationVisibility.SHARED : EBookAnnotationVisibility.PRIVATE;
+              setVisibility(picked);
+              onSave({ visibility: picked });
+            }}
           />
           Share with everyone who can read this book
         </label>
