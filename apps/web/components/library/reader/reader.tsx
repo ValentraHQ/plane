@@ -27,6 +27,7 @@ import type {
   TBookAnnotationColor,
   TBookChapterContent,
   TBookChapterSummary,
+  TBookPassage,
   TBookPosition,
   TBookReadingStatePayload,
   TReaderPreferences,
@@ -41,6 +42,7 @@ import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { bookTitle } from "../utils";
+import { WikiPageFromBookModal } from "../wiki-page-modal";
 import { AnnotationPopover, NotesPanel, SelectionToolbar } from "./annotations";
 import type { TReaderFrameHandle, TReaderSelection } from "./reader-frame";
 import { ReaderFrame, THEMES } from "./reader-frame";
@@ -73,6 +75,13 @@ const isDarkApp = () => (document.documentElement.getAttribute("data-theme") ?? 
 
 type Props = { workspaceSlug: string; bookId: string };
 
+const passageOf = (a: TBookAnnotation): TBookPassage => ({
+  chapter: a.chapter,
+  start_offset: a.start_offset,
+  quote: a.quote,
+  note: a.note,
+});
+
 export const BookReader = observer(function BookReader({ workspaceSlug, bookId }: Props) {
   const { getBookById, fetchBook } = useLibrary();
   const { toggleSidebar } = useAppTheme();
@@ -97,6 +106,7 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
   const [orphanIds, setOrphanIds] = useState<Set<string>>(new Set());
   const [selection, setSelection] = useState<TReaderSelection | null>(null);
   const [opened, setOpened] = useState<{ annotation: TBookAnnotation; isNew?: boolean } | null>(null);
+  const [wikiPassages, setWikiPassages] = useState<TBookPassage[] | null>(null);
   const [progress, setProgress] = useState(0);
   const [pageInfo, setPageInfo] = useState({ page: 1, pages: 1 });
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -521,6 +531,7 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
       ? THEMES[systemDark ? "dark" : "light"]
       : (THEMES[preferences.theme] ?? THEMES.light);
 
+  const titleOf = (index: number) => chapters.find((c) => c.index === index)?.title || `Section ${index + 1}`;
   const chapterTitle =
     chapter?.title ||
     chapters.find((c) => c.index === chapter?.index)?.title ||
@@ -703,8 +714,9 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
                   annotations={annotations}
                   currentUserId={currentUserId}
                   orphanIds={orphanIds}
-                  chapterTitle={(index) => chapters.find((c) => c.index === index)?.title || `Section ${index + 1}`}
+                  chapterTitle={titleOf}
                   onOpen={openAnnotation}
+                  onWikiPage={(items) => setWikiPassages(items.map(passageOf))}
                   onExport={() =>
                     void service.exportAnnotations(workspaceSlug, bookId).catch((error) => annotationError(error))
                   }
@@ -728,6 +740,17 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
             frame.current?.clearSelection();
             setSelection(null);
           }}
+          onWikiPage={
+            chapter
+              ? () => {
+                  setWikiPassages([
+                    { chapter: chapter.index, start_offset: selection.start, quote: selection.quote, note: "" },
+                  ]);
+                  frame.current?.clearSelection();
+                  setSelection(null);
+                }
+              : undefined
+          }
         />
       )}
       {opened && (
@@ -747,6 +770,20 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
           }
           onDelete={() => (opened.isNew ? setOpened(null) : void deleteAnnotation(opened.annotation))}
           onClose={() => setOpened(null)}
+          onWikiPage={() => {
+            setWikiPassages([passageOf(opened.annotation)]);
+            setOpened(null);
+          }}
+        />
+      )}
+      {book && wikiPassages && (
+        <WikiPageFromBookModal
+          workspaceSlug={workspaceSlug}
+          book={book}
+          passages={wikiPassages}
+          chapterTitle={titleOf}
+          isOpen
+          onClose={() => setWikiPassages(null)}
         />
       )}
 

@@ -7,6 +7,7 @@
 import React from "react";
 // plane imports
 import type { TIssueServiceType, TWorkItemWidgets } from "@plane/types";
+import { WorkItemBooks } from "@/components/library/book-links";
 // local imports
 import { IssueDetailWidgetActionButtons } from "./action-buttons";
 import { IssueDetailWidgetCollapsibles } from "./issue-detail-widget-collapsibles";
@@ -52,6 +53,8 @@ export function IssueDetailWidgets(props: Props) {
           issueServiceType={issueServiceType}
           hideWidgets={hideWidgets}
         />
+        {/* fork: books from the library linked to this work item */}
+        <WorkItemBooks workspaceSlug={workspaceSlug} issueId={issueId} disabled={disabled} />
       </div>
       {renderWidgetModals && (
         <IssueDetailWidgetModals

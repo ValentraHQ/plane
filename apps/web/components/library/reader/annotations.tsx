@@ -59,10 +59,11 @@ type ToolbarProps = {
   onHighlight: (color: TBookAnnotationColor) => void;
   onNote: () => void;
   onCopy: () => void;
+  onWikiPage?: () => void;
 };
 
-export function SelectionToolbar({ box, onHighlight, onNote, onCopy }: ToolbarProps) {
-  const { left, top } = placement(box, 280, 44);
+export function SelectionToolbar({ box, onHighlight, onNote, onCopy, onWikiPage }: ToolbarProps) {
+  const { left, top } = placement(box, onWikiPage ? 360 : 280, 44);
   return (
     <div
       role="toolbar"
@@ -88,6 +89,15 @@ export function SelectionToolbar({ box, onHighlight, onNote, onCopy }: ToolbarPr
       >
         Copy
       </button>
+      {onWikiPage && (
+        <button
+          type="button"
+          onClick={onWikiPage}
+          className="rounded-md px-2 py-1 text-12 whitespace-nowrap text-secondary hover:bg-layer-transparent-hover"
+        >
+          Wiki page
+        </button>
+      )}
     </div>
   );
 }
@@ -103,9 +113,12 @@ type PopoverProps = {
   onSave: (change: { color?: TBookAnnotationColor; note?: string; visibility?: EBookAnnotationVisibility }) => void;
   onDelete: () => void;
   onClose: () => void;
+  /** start a wiki page from this annotation */
+  onWikiPage?: () => void;
 };
 
-export function AnnotationPopover({ annotation, box, canShare, isNew, onSave, onDelete, onClose }: PopoverProps) {
+export function AnnotationPopover(props: PopoverProps) {
+  const { annotation, box, canShare, isNew, onSave, onDelete, onClose, onWikiPage } = props;
   const [note, setNote] = useState(annotation.note);
   // colour and sharing change at once; the saved annotation follows
   const [color, setColor] = useState(annotation.color);
@@ -183,6 +196,15 @@ export function AnnotationPopover({ annotation, box, canShare, isNew, onSave, on
           <span />
         )}
         <div className="flex gap-2">
+          {onWikiPage && !isNew && (
+            <button
+              type="button"
+              onClick={onWikiPage}
+              className="rounded-md px-2 py-1 text-12 text-secondary hover:bg-layer-transparent-hover"
+            >
+              Wiki page
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -215,16 +237,24 @@ type PanelProps = {
   chapterTitle: (index: number) => string;
   onOpen: (annotation: TBookAnnotation) => void;
   onExport: () => void;
+  /** start a wiki page from these annotations */
+  onWikiPage?: (annotations: TBookAnnotation[]) => void;
 };
 
 const KIND_LABEL = { highlight: "Highlight", note: "Note", bookmark: "Bookmark" };
 
-export function NotesPanel({ annotations, currentUserId, orphanIds, chapterTitle, onOpen, onExport }: PanelProps) {
+export function NotesPanel(props: PanelProps) {
+  const { annotations, currentUserId, orphanIds, chapterTitle, onOpen, onExport, onWikiPage } = props;
   const [filter, setFilter] = useState<"all" | "mine" | "shared">("all");
   const shown = annotations.filter((a) =>
     filter === "mine" ? a.user === currentUserId : filter === "shared" ? a.user !== currentUserId : true
   );
   const hasShared = annotations.some((a) => a.user !== currentUserId);
+  // the reader's own highlights and notes, in reading order, can become a wiki page
+  const quotable = sortBy(
+    annotations.filter((a) => a.user === currentUserId && !orphanIds.has(a.id) && (a.quote || a.note)),
+    ["chapter", "start_offset"]
+  );
   const groups = new Map<number, TBookAnnotation[]>();
   for (const a of sortBy(shown, ["chapter", "start_offset"])) {
     groups.set(a.chapter, [...(groups.get(a.chapter) ?? []), a]);
@@ -251,13 +281,24 @@ export function NotesPanel({ annotations, currentUserId, orphanIds, chapterTitle
         ) : (
           <span className="text-12 text-tertiary">{annotations.length} in this book</span>
         )}
-        <button
-          type="button"
-          onClick={onExport}
-          className="rounded-md px-2 py-1 text-12 text-accent-primary hover:bg-layer-transparent-hover"
-        >
-          Export Markdown
-        </button>
+        <div className="flex gap-1">
+          {onWikiPage && quotable.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onWikiPage(quotable)}
+              className="rounded-md px-2 py-1 text-12 text-accent-primary hover:bg-layer-transparent-hover"
+            >
+              Wiki page
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onExport}
+            className="rounded-md px-2 py-1 text-12 text-accent-primary hover:bg-layer-transparent-hover"
+          >
+            Export Markdown
+          </button>
+        </div>
       </div>
       {shown.length === 0 && (
         <p className="text-13 text-tertiary">

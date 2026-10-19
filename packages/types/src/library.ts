@@ -230,3 +230,58 @@ export type TBookAnnotationListResponse = {
   counts: Partial<Record<TBookAnnotationKind, number>>;
   results: TBookAnnotation[];
 };
+
+// --- wiki pages from books, and links ---
+
+export type TBookLinkTargetType = "page" | "project" | "issue";
+
+export type TBookLinkTarget = {
+  id: string;
+  name: string;
+  /** pages: a wiki page has a space, a project page a project */
+  space_id?: string | null;
+  project_id?: string | null;
+  /** projects */
+  identifier?: string;
+  /** work items */
+  project_identifier?: string;
+  sequence_id?: number;
+};
+
+export type TBookLink = {
+  id: string;
+  book: string;
+  target_type: TBookLinkTargetType;
+  target: TBookLinkTarget;
+  /** "created": a page made from the book; "linked": added by hand */
+  origin: "created" | "linked";
+  chapter: number | null;
+  start_offset: number | null;
+  created_by: string | null;
+  created_at: string;
+  permissions: { can_delete: boolean };
+  /** only on the linked-books list of a target */
+  book_detail?: TBook;
+};
+
+export type TBookPassage = {
+  chapter: number;
+  start_offset: number;
+  quote: string;
+  note: string;
+};
+
+export type TWikiPageFromBook = {
+  space: string;
+  parent?: string | null;
+  title?: string;
+  intro?: string;
+  passages: TBookPassage[];
+  share: boolean;
+  confirm_excerpts: boolean;
+};
+
+export type TWikiPageFromBookResponse = {
+  page: { id: string; name: string; space: string; access: number };
+  link: TBookLink;
+};

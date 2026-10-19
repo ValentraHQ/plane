@@ -14,6 +14,9 @@ import type {
   TBookAnnotationListResponse,
   TBookAnnotationUpdate,
   TBookChapterContent,
+  TBookLink,
+  TBookLinkTarget,
+  TBookLinkTargetType,
   TBookChapterSummary,
   TBookReadingState,
   TBookReadingStatePayload,
@@ -25,6 +28,8 @@ import type {
   TBookTag,
   TBookUpdatePayload,
   TBookUploadReservation,
+  TWikiPageFromBook,
+  TWikiPageFromBookResponse,
   EBookVisibility,
 } from "@plane/types";
 import { API_BASE_URL } from "@plane/constants";
@@ -251,6 +256,48 @@ export class LibraryService extends APIService {
     link.click();
     link.remove();
     URL.revokeObjectURL(href);
+  }
+
+  // --- wiki pages and links ---
+
+  async createWikiPage(slug: string, bookId: string, data: TWikiPageFromBook): Promise<TWikiPageFromBookResponse> {
+    return this.post(`${this.base(slug)}/books/${bookId}/wiki-pages/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async listBookLinks(slug: string, bookId: string): Promise<TBookLink[]> {
+    return this.get(`${this.base(slug)}/books/${bookId}/links/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async createBookLink(
+    slug: string,
+    bookId: string,
+    targetType: TBookLinkTargetType,
+    targetId: string
+  ): Promise<TBookLink> {
+    return this.post(`${this.base(slug)}/books/${bookId}/links/`, { target_type: targetType, target_id: targetId })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async deleteBookLink(slug: string, linkId: string): Promise<void> {
+    await this.delete(`${this.base(slug)}/links/${linkId}/`).catch(rethrow);
+  }
+
+  /** Books linked to a page, project or work item (that the user can see). */
+  async listLinkedBooks(slug: string, targetType: TBookLinkTargetType, targetId: string): Promise<TBookLink[]> {
+    return this.get(`${this.base(slug)}/links/`, { params: { target_type: targetType, target_id: targetId } })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async searchLinkTargets(slug: string, targetType: TBookLinkTargetType, search: string): Promise<TBookLinkTarget[]> {
+    return this.get(`${this.base(slug)}/link-targets/`, { params: { target_type: targetType, search } })
+      .then((response) => response?.data)
+      .catch(rethrow);
   }
 
   async listTags(slug: string): Promise<TBookTag[]> {

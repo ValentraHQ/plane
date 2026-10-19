@@ -22,6 +22,7 @@ import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { BookActionsMenu } from "./book-actions-menu";
+import { BookLinks } from "./book-links";
 import { BookCover } from "./book-cover";
 import { BookEditModal } from "./book-edit-modal";
 import { STATUS_LABELS, bookAuthors, bookTitle, formatBytes, plural } from "./utils";
@@ -267,6 +268,7 @@ export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }
           {book.subjects.length > 0 && <p className="text-12 text-tertiary">Subjects: {book.subjects.join(" · ")}</p>}
         </div>
       </div>
+      <BookLinks workspaceSlug={workspaceSlug} book={book} />
       {book.toc && book.toc.length > 0 && (
         <section aria-labelledby="book-toc" className="flex flex-col gap-3">
           <h2 id="book-toc" className="text-14 font-semibold text-primary">
