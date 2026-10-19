@@ -26,6 +26,7 @@ from plane.app.views.library.links import (
     LinkedBooksEndpoint,
     LinkTargetSearchEndpoint,
 )
+from plane.app.views.library.search import LibrarySearchEndpoint
 from plane.app.views.library.reading import (
     BookReadingStateEndpoint,
     BookSearchEndpoint,
@@ -70,6 +71,11 @@ urlpatterns = [
         "workspaces/<str:slug>/library/links/<uuid:link_id>/",
         BookLinkDetailEndpoint.as_view(),
         name="library-link",
+    ),
+    path(
+        "workspaces/<str:slug>/library/search/",
+        LibrarySearchEndpoint.as_view(),
+        name="library-search",
     ),
     path(
         "workspaces/<str:slug>/library/link-targets/",

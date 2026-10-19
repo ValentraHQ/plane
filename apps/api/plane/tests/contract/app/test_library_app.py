@@ -57,9 +57,10 @@ def library(settings, monkeypatch):
     fake = FakeStorage(store)
     monkeypatch.setattr(views, "S3Storage", lambda *args, **kwargs: fake)
     monkeypatch.setattr(book_task, "S3Storage", lambda *args, **kwargs: fake)
-    calls = {"process": [], "purge": []}
+    calls = {"process": [], "purge": [], "index": []}
     monkeypatch.setattr(views.process_book, "delay", lambda *args: calls["process"].append(args))
     monkeypatch.setattr(views.purge_book_files, "delay", lambda *args: calls["purge"].append(args))
+    monkeypatch.setattr(views.index_book, "delay", lambda *args: calls["index"].append(args))
     return {"storage": fake, "calls": calls}
 
 
@@ -1063,3 +1064,158 @@ class TestLibraryWiki:
         )  # editor of the book
         assert other_client.delete(lib_url(workspace.slug, f"links/{by_other['id']}/")).status_code == 204
         assert client.get(endpoint).json() == []
+
+
+# --- search across the library (PR 6) ---
+
+
+def indexed(workspace, owner, texts, **extra):
+    """A ready EPUB with one chapter per text, indexed for search."""
+    from plane.utils.book_search import index_book_text
+
+    item = book(workspace, owner, status=Book.STATUS_READY, chapter_count=len(texts), **extra)
+    for index, text in enumerate(texts):
+        chapter(workspace, item, index, text, title=f"Part {index + 1}")
+    index_book_text(item.id)
+    return item
+
+
+def search(client, slug, **params):
+    response = client.get(f"/api/workspaces/{slug}/library/search/", params)
+    assert response.status_code == 200, response.content
+    return response.json()
+
+
+def titles_of(data):
+    return [r["book"]["title"] for r in data["results"]]
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibrarySearch:
+    def test_details_and_text_are_searched_and_ranked(self, library, people, workspace):
+        user, client = people["member"]
+        indexed(workspace, user, ["Nothing here."], title="Orbital Mechanics", authors=["Kepler"])
+        indexed(
+            workspace,
+            user,
+            ["A quiet start.", "Moons settle into an orbital resonance over time. Later, orbital decay."],
+            title="Moons",
+            language="en",
+        )
+        indexed(workspace, user, ["Gardens and roses."], title="Gardening")
+        data = search(client, workspace.slug, q="orbital")
+        assert titles_of(data) == ["Orbital Mechanics", "Moons"]  # a book about it beats a mention
+        about, mention = data["results"]
+        assert about["matched_details"] and not about["matched_text"]
+        assert mention["matched_text"] and mention["chapter_matches"] == 1
+        [found] = mention["passages"]
+        assert found["chapter"] == 1 and found["chapter_title"] == "Part 2"
+        assert found["match"] == "orbital" and found["occurrence"] == 0
+        assert found["before"].endswith("settle into an ") and found["after"].startswith(" resonance")
+        # authors and partial words while typing
+        assert titles_of(search(client, workspace.slug, q="kepl")) == ["Orbital Mechanics"]
+        # web-style queries: phrases and exclusions
+        assert titles_of(search(client, workspace.slug, q='"orbital decay"')) == ["Moons"]
+        assert titles_of(search(client, workspace.slug, q="orbital -resonance")) == ["Orbital Mechanics"]
+        # details only
+        assert titles_of(search(client, workspace.slug, q="orbital", content="false")) == ["Orbital Mechanics"]
+
+    def test_stemming_follows_the_book_language(self, library, people, workspace):
+        user, client = people["member"]
+        english = indexed(workspace, user, ["The rockets were launched at dawn."], title="Rockets", language="en-GB")
+        indexed(workspace, user, ["The rockets were launched at dawn."], title="Untagged")
+        english.refresh_from_db()
+        assert english.search_config == "english"
+        data = search(client, workspace.slug, q="launching")
+        assert titles_of(data) == ["Rockets"]  # "simple" has no stemming
+        assert data["results"][0]["passages"][0]["match"] == "launched"
+
+    def test_search_never_reveals_what_the_user_cannot_see(self, library, people, workspace, settings):
+        user, client = people["member"]
+        other, other_client = people["other"]
+        admin_client = people["admin2"][1]
+        private = indexed(workspace, other, ["The zebra secret is kept here."], title="Zebra Diary")
+        shared = indexed(workspace, other, ["A zebra crossing."], title="Streets", visibility=Book.VISIBILITY_WORKSPACE)
+        for viewer in (client, admin_client):  # admins do not see personal books either
+            data = search(viewer, workspace.slug, q="zebra")
+            assert titles_of(data) == ["Streets"] and data["count"] == 1
+            assert "secret" not in json.dumps(data)
+        assert sorted(titles_of(search(other_client, workspace.slug, q="zebra"))) == ["Streets", "Zebra Diary"]
+        # made personal: gone for everyone else
+        Book.objects.filter(pk=shared.id).update(visibility=Book.VISIBILITY_PERSONAL)
+        assert search(client, workspace.slug, q="zebra")["count"] == 0
+        Book.objects.filter(pk=shared.id).update(visibility=Book.VISIBILITY_WORKSPACE)
+        # the book can keep its text out of search; its details still match
+        Book.objects.filter(pk=shared.id).update(search_content=False)
+        assert search(client, workspace.slug, q="crossing")["count"] == 0
+        assert titles_of(search(client, workspace.slug, q="streets")) == ["Streets"]
+        Book.objects.filter(pk=shared.id).update(search_content=True)
+        # full-text search off for the instance
+        settings.LIBRARY_FULLTEXT_SEARCH = False
+        off = search(client, workspace.slug, q="crossing")
+        assert off["count"] == 0 and off["content_searched"] is False
+        settings.LIBRARY_FULLTEXT_SEARCH = True
+        # archived and deleted books
+        Book.objects.filter(pk=shared.id).update(archived_at=timezone_now())
+        assert search(client, workspace.slug, q="crossing")["count"] == 0
+        assert search(client, workspace.slug, q="crossing", archived="true")["count"] == 1
+        Book.objects.filter(pk=shared.id).update(archived_at=None)
+        Book.objects.get(pk=shared.id).delete()
+        assert search(client, workspace.slug, q="crossing")["count"] == 0
+        # guests have no library
+        assert (
+            people["guest"][1].get(f"/api/workspaces/{workspace.slug}/library/search/", {"q": "zebra"}).status_code
+            == 403
+        )
+        assert private.id  # still there for its owner
+
+    def test_short_queries_paging_and_filters(self, library, people, workspace):
+        user, client = people["member"]
+        for n in range(5):
+            indexed(workspace, user, [f"Comets everywhere, volume {n}."], title=f"Comets {n}")
+        pdf = indexed(workspace, user, ["Comets."], title="Comet PDF")
+        Book.objects.filter(pk=pdf.id).update(format="pdf")
+        assert search(client, workspace.slug, q="c") == {
+            "query": "c", "count": 0, "limit": 20, "offset": 0, "results": [], "content_searched": True
+        }  # fmt: skip
+        page = search(client, workspace.slug, q="comets", limit=2, offset=2)
+        assert page["count"] == 6 and len(page["results"]) == 2
+        assert titles_of(search(client, workspace.slug, q="comets", file_format="pdf")) == ["Comet PDF"]
+        # the book list filters by format too ("format" itself belongs to REST framework)
+        listed = client.get(url(workspace.slug), {"file_format": "pdf"})
+        assert listed.status_code == 200 and [b["title"] for b in listed.json()["results"]] == ["Comet PDF"]
+
+    def test_search_settings_on_the_book(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        item = indexed(workspace, user, ["Text."], title="Settings", visibility=Book.VISIBILITY_WORKSPACE)
+        assert (
+            other_client.patch(url(workspace.slug, item.id), {"search_content": False}, format="json").status_code
+            == 403
+        )
+        response = client.patch(url(workspace.slug, item.id), {"search_content": False}, format="json")
+        assert response.status_code == 200 and response.json()["search_content"] is False
+        # a new language means a new stemming: the text is indexed again
+        client.patch(url(workspace.slug, item.id), {"language": "fr"}, format="json")
+        assert library["calls"]["index"] == [(str(item.id),)]
+        Book.objects.filter(pk=item.id).update(search_config="french")  # what the queued task does
+        client.patch(url(workspace.slug, item.id), {"language": "fr-CA"}, format="json")
+        assert len(library["calls"]["index"]) == 1  # same configuration, nothing to do
+
+    def test_reindex_command(self, library, people, workspace):
+        from django.core.management import call_command
+
+        user, client = people["member"]
+        item = indexed(workspace, user, ["Nebulae glow."], title="Nebulae")
+        BookChapter.objects.filter(book=item).update(search_vector=None)
+        Book.objects.filter(pk=item.id).update(text_indexed_at=None)
+        assert search(client, workspace.slug, q="glow")["count"] == 0
+        call_command("library_reindex", "--missing")
+        assert titles_of(search(client, workspace.slug, q="glow")) == ["Nebulae"]
+
+
+def timezone_now():
+    from django.utils import timezone
+
+    return timezone.now()

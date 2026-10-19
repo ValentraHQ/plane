@@ -78,7 +78,7 @@ export class LibraryService extends APIService {
     const params: Record<string, string | number> = { offset, limit, order_by: filters.order_by };
     if (filters.search) params.search = filters.search;
     if (filters.visibility !== null) params.visibility = filters.visibility;
-    if (filters.format) params.format = filters.format;
+    if (filters.format) params.file_format = filters.format;
     if (filters.tag) params.tag = filters.tag;
     if (filters.collection) params.collection = filters.collection;
     if (filters.archived) params.archived = "true";

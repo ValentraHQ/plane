@@ -81,6 +81,7 @@ class BookSerializer(BaseSerializer):
             "identifiers",
             "edited_fields",
             "tags",
+            "search_content",
             "owner_detail",
             "my_reading",
             "chapter_count",
@@ -155,6 +156,7 @@ class BookUpdateSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=10000, required=False, allow_blank=True)
     visibility = serializers.ChoiceField(choices=[Book.VISIBILITY_PERSONAL, Book.VISIBILITY_WORKSPACE], required=False)
     archived = serializers.BooleanField(required=False)
+    search_content = serializers.BooleanField(required=False)
     tags = serializers.ListField(
         child=serializers.CharField(max_length=50, allow_blank=True), max_length=50, required=False, allow_empty=True
     )

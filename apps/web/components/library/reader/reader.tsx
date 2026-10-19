@@ -195,11 +195,14 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
         const valid = typeof saved?.chapter === "number" && list.some((c) => c.index === saved.chapter);
         finished.current = state.status === EBookReadingStatus.COMPLETED;
         setAnnotations(notes);
-        // a link to a passage (from the notes page) wins over the saved position
+        // a link to a passage (notes page, wiki page, library search) wins over the saved position
         const query = new URLSearchParams(window.location.search);
         const linked = Number(query.get("chapter"));
         if (query.has("chapter") && list.some((c) => c.index === linked)) {
-          target.current = { kind: "offset", offset: Number(query.get("offset")) || 0 };
+          const find = query.get("find");
+          target.current = find
+            ? { kind: "occurrence", text: find, occurrence: Number(query.get("occurrence")) || 0 }
+            : { kind: "offset", offset: Number(query.get("offset")) || 0 };
           setChapter(await fetchChapter(linked));
         } else {
           target.current = valid ? { kind: "offset", offset: saved.offset ?? 0 } : { kind: "start" };

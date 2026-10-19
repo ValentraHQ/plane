@@ -372,6 +372,10 @@ BOOK_SIGNED_URL_EXPIRATION = int(os.environ.get("BOOK_SIGNED_URL_EXPIRATION", 60
 BOOK_EXCERPT_LIMIT = int(os.environ.get("BOOK_EXCERPT_LIMIT", 1500))
 # all excerpts copied into one wiki page together
 BOOK_EXCERPT_PAGE_LIMIT = int(os.environ.get("BOOK_EXCERPT_PAGE_LIMIT", 10000))
+# search inside the text of books (each book can still opt out); off: titles and other details only
+LIBRARY_FULLTEXT_SEARCH = os.environ.get("LIBRARY_FULLTEXT_SEARCH", "1") == "1"
+# characters of one chapter that are indexed (a tsvector holds at most 1 MB)
+BOOK_INDEX_CHAPTER_LIMIT = int(os.environ.get("BOOK_INDEX_CHAPTER_LIMIT", 500000))
 
 # Unsplash Access key
 UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")

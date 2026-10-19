@@ -63,6 +63,7 @@ export interface IInstanceConfig {
   book_file_size_limit?: number;
   book_excerpt_limit?: number;
   book_excerpt_page_limit?: number;
+  is_library_fulltext_enabled?: boolean;
   is_smtp_configured: boolean;
   app_base_url: string | undefined;
   space_base_url: string | undefined;

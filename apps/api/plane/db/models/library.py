@@ -13,6 +13,8 @@ Access is resolved by plane.utils.book_access; keep authorization logic there, n
 
 # Django imports
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVectorField
 from django.db import models
 from django.db.models import Q
 
@@ -93,6 +95,11 @@ class Book(BaseModel):
     page_count = models.PositiveIntegerField(null=True, blank=True)
 
     archived_at = models.DateTimeField(null=True, blank=True)
+    # full-text search over the book's text: allowed by whoever can edit the book (on by default);
+    # the text search configuration follows the book's language and is set when the text is indexed
+    search_content = models.BooleanField(default=True)
+    search_config = models.CharField(max_length=32, blank=True, default="simple")
+    text_indexed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Book"
@@ -134,6 +141,8 @@ class BookChapter(BaseModel):
     title = models.CharField(max_length=512, blank=True, default="")
     content_key = models.CharField(max_length=1024)
     text = models.TextField(blank=True, default="")
+    # to_tsvector(book.search_config, text), written by index_book_text after processing
+    search_vector = SearchVectorField(null=True, blank=True)
     character_count = models.PositiveIntegerField(default=0)
     # spine items marked linear="no" (notes, pop-ups) are kept but skipped by default navigation
     linear = models.BooleanField(default=True)
@@ -150,6 +159,7 @@ class BookChapter(BaseModel):
                 name="book_chapter_unique_index_when_deleted_at_null",
             )
         ]
+        indexes = [GinIndex(fields=["search_vector"], name="book_chapter_search_idx")]
 
     def __str__(self):
         return f"{self.book_id} #{self.index}"
