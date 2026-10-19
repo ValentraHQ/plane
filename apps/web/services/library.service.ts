@@ -9,6 +9,10 @@ import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import type {
   TBook,
+  TBookAnnotation,
+  TBookAnnotationCreate,
+  TBookAnnotationListResponse,
+  TBookAnnotationUpdate,
   TBookChapterContent,
   TBookChapterSummary,
   TBookReadingState,
@@ -195,6 +199,58 @@ export class LibraryService extends APIService {
     return this.get(`${this.base(slug)}/books/${bookId}/search/`, { params: { q: query } })
       .then((response) => response?.data)
       .catch(rethrow);
+  }
+
+  async listBookAnnotations(slug: string, bookId: string): Promise<TBookAnnotation[]> {
+    return this.get(`${this.base(slug)}/books/${bookId}/annotations/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async createAnnotation(slug: string, bookId: string, data: TBookAnnotationCreate): Promise<TBookAnnotation> {
+    return this.post(`${this.base(slug)}/books/${bookId}/annotations/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async updateAnnotation(slug: string, annotationId: string, data: TBookAnnotationUpdate): Promise<TBookAnnotation> {
+    return this.patch(`${this.base(slug)}/annotations/${annotationId}/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async deleteAnnotation(slug: string, annotationId: string): Promise<void> {
+    return this.delete(`${this.base(slug)}/annotations/${annotationId}/`)
+      .then(() => undefined)
+      .catch(rethrow);
+  }
+
+  async listMyAnnotations(
+    slug: string,
+    params: { book?: string; kind?: string; search?: string; limit?: number; offset?: number } = {}
+  ): Promise<TBookAnnotationListResponse> {
+    return this.get(`${this.base(slug)}/annotations/`, { params })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  /** Download the user's own annotations as Markdown (one book, or all books). */
+  async exportAnnotations(slug: string, bookId?: string) {
+    const response = await this.get(`${this.base(slug)}/annotations/export/`, {
+      params: bookId ? { book: bookId } : {},
+      responseType: "blob",
+    }).catch(rethrow);
+    const disposition: string = response?.headers?.["content-disposition"] ?? "";
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/);
+    const name = match ? decodeURIComponent(match[1] ?? match[2]) : "notes-and-highlights.md";
+    const href = URL.createObjectURL(response.data as Blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
   }
 
   async listTags(slug: string): Promise<TBookTag[]> {

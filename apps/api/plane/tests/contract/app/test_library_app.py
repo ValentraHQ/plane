@@ -634,3 +634,203 @@ class TestLibraryReading:
         assert client.get(search_url, {"q": "a"}).json()["results"] == []
         assert client.get(search_url, {"q": "dragons"}).json()["results"] == []
         assert people["other"][1].get(search_url, {"q": "alice"}).status_code == 404
+
+
+def ann_url(slug, book_id=None, annotation_id=None, suffix=""):
+    if annotation_id:
+        return f"/api/workspaces/{slug}/library/annotations/{annotation_id}/{suffix}"
+    if book_id:
+        return f"/api/workspaces/{slug}/library/books/{book_id}/annotations/"
+    return f"/api/workspaces/{slug}/library/annotations/{suffix}"
+
+
+def readable(workspace, owner, **extra):
+    item = book(workspace, owner, status=Book.STATUS_READY, chapter_count=3, **extra)
+    for index in range(3):
+        chapter(workspace, item, index, f"Text of chapter {index}.", title=f"Chapter {index + 1}")
+    return item
+
+
+HIGHLIGHT = {
+    "chapter": 1,
+    "start_offset": 5,
+    "end_offset": 30,
+    "quote": "the passage",
+    "prefix": "before ",
+    "suffix": " after",
+}
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryAnnotations:
+    def test_create_kinds_and_validation(self, library, people, workspace):
+        user, client = people["member"]
+        item = readable(workspace, user)
+        created = client.post(ann_url(workspace.slug, item.id), {**HIGHLIGHT, "color": "green"}, format="json")
+        assert created.status_code == 201, created.json()
+        data = created.json()
+        assert (data["kind"], data["color"], data["chapter_title"], data["visibility"]) == (
+            "highlight",
+            "green",
+            "Chapter 2",
+            0,
+        )
+        assert data["permissions"] == {"can_edit": True, "can_delete": True}
+        note = client.post(
+            ann_url(workspace.slug, item.id), {**HIGHLIGHT, "kind": "note", "note": "Remember this"}, format="json"
+        )
+        assert note.status_code == 201 and note.json()["color"] == ""
+        mark = client.post(
+            ann_url(workspace.slug, item.id),
+            {"kind": "bookmark", "chapter": 2, "start_offset": 7, "end_offset": 7},
+            format="json",
+        )
+        assert mark.status_code == 201
+        bad = [
+            ({**HIGHLIGHT, "end_offset": 1}, "end_offset"),
+            ({**HIGHLIGHT, "end_offset": 30000}, "end_offset"),
+            ({**HIGHLIGHT, "end_offset": 5}, "end_offset"),
+            ({**HIGHLIGHT, "kind": "note", "note": "  "}, "note"),
+            ({**HIGHLIGHT, "color": "neon"}, "color"),
+            ({**HIGHLIGHT, "quote": "x" * 5000}, "quote"),
+        ]
+        for payload, field in bad:
+            response = client.post(ann_url(workspace.slug, item.id), payload, format="json")
+            assert response.status_code == 400 and field in response.json(), (payload, response.json())
+        assert (
+            client.post(ann_url(workspace.slug, item.id), {**HIGHLIGHT, "chapter": 3}, format="json").status_code == 400
+        )
+        unready = book(workspace, user, status=Book.STATUS_PROCESSING, chapter_count=3)
+        assert client.post(ann_url(workspace.slug, unready.id), HIGHLIGHT, format="json").status_code == 409
+
+    def test_private_by_default_and_explicit_sharing(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        shared_book = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        private = client.post(ann_url(workspace.slug, shared_book.id), HIGHLIGHT, format="json").json()
+        assert other_client.get(ann_url(workspace.slug, shared_book.id)).json() == []
+        assert (
+            other_client.patch(
+                ann_url(workspace.slug, annotation_id=private["id"]), {"color": "pink"}, format="json"
+            ).status_code
+            == 404
+        )
+        shared = client.patch(ann_url(workspace.slug, annotation_id=private["id"]), {"visibility": 1}, format="json")
+        assert shared.status_code == 200
+        seen = other_client.get(ann_url(workspace.slug, shared_book.id)).json()
+        assert [a["id"] for a in seen] == [private["id"]] and seen[0]["permissions"] == {
+            "can_edit": False,
+            "can_delete": False,
+        }
+        assert seen[0]["user_detail"]["display_name"] == user.display_name
+        assert (
+            other_client.patch(
+                ann_url(workspace.slug, annotation_id=private["id"]), {"note": "x"}, format="json"
+            ).status_code
+            == 403
+        )
+        assert other_client.delete(ann_url(workspace.slug, annotation_id=private["id"])).status_code == 403
+        # others' shared annotations are not "mine"
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 0
+        assert other_client.get(ann_url(workspace.slug, shared_book.id), {"mine": "true"}).json() == []
+
+    def test_sharing_needs_a_workspace_book(self, library, people, workspace):
+        user, client = people["member"]
+        personal = readable(workspace, user)
+        assert (
+            client.post(ann_url(workspace.slug, personal.id), {**HIGHLIGHT, "visibility": 1}, format="json").status_code
+            == 400
+        )
+        created = client.post(ann_url(workspace.slug, personal.id), HIGHLIGHT, format="json").json()
+        assert (
+            client.patch(
+                ann_url(workspace.slug, annotation_id=created["id"]), {"visibility": 1}, format="json"
+            ).status_code
+            == 400
+        )
+
+    def test_shared_annotations_disappear_when_the_book_becomes_personal(self, library, people, workspace):
+        owner, owner_client = people["member"]
+        other_user, other_client = people["other"]
+        item = readable(workspace, owner, visibility=Book.VISIBILITY_WORKSPACE)
+        theirs = other_client.post(
+            ann_url(workspace.slug, item.id), {**HIGHLIGHT, "visibility": 1}, format="json"
+        ).json()
+        assert [a["id"] for a in owner_client.get(ann_url(workspace.slug, item.id)).json()] == [theirs["id"]]
+        owner_client.patch(url(workspace.slug, item.id), {"visibility": 0}, format="json")
+        # the owner no longer sees someone else's annotations on a book that is now private to them ...
+        assert owner_client.get(ann_url(workspace.slug, item.id)).json() == []
+        # ... and the other member can no longer reach the book or the annotation
+        assert other_client.get(ann_url(workspace.slug, item.id)).status_code == 404
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 0
+        # sharing the book again brings the annotation back, still shared
+        owner_client.patch(url(workspace.slug, item.id), {"visibility": 1}, format="json")
+        assert [a["id"] for a in owner_client.get(ann_url(workspace.slug, item.id)).json()] == [theirs["id"]]
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 1
+
+    def test_admins_can_remove_shared_annotations_only(self, library, people, workspace):
+        user, client = people["member"]
+        admin_client = people["admin2"][1]
+        item = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        shared = client.post(ann_url(workspace.slug, item.id), {**HIGHLIGHT, "visibility": 1}, format="json").json()
+        private = client.post(ann_url(workspace.slug, item.id), HIGHLIGHT, format="json").json()
+        assert admin_client.get(ann_url(workspace.slug, item.id)).json()[0]["permissions"] == {
+            "can_edit": False,
+            "can_delete": True,
+        }
+        assert (
+            admin_client.patch(
+                ann_url(workspace.slug, annotation_id=shared["id"]), {"note": "x"}, format="json"
+            ).status_code
+            == 403
+        )
+        assert admin_client.delete(ann_url(workspace.slug, annotation_id=private["id"])).status_code == 404
+        assert admin_client.delete(ann_url(workspace.slug, annotation_id=shared["id"])).status_code == 204
+        assert client.delete(ann_url(workspace.slug, annotation_id=private["id"])).status_code == 204
+
+    def test_my_annotations_across_books(self, library, people, workspace):
+        user, client = people["member"]
+        first, second = readable(workspace, user, title="Alpha"), readable(workspace, user, title="Beta")
+        client.post(ann_url(workspace.slug, first.id), {**HIGHLIGHT, "quote": "orbital mechanics"}, format="json")
+        client.post(
+            ann_url(workspace.slug, second.id),
+            {**HIGHLIGHT, "kind": "note", "note": "check the delta-v"},
+            format="json",
+        )
+        client.post(
+            ann_url(workspace.slug, second.id),
+            {"kind": "bookmark", "chapter": 0, "start_offset": 0, "end_offset": 0},
+            format="json",
+        )
+        mine = client.get(ann_url(workspace.slug)).json()
+        assert mine["count"] == 3 and mine["counts"] == {"highlight": 1, "note": 1, "bookmark": 1}
+        assert {a["book_title"] for a in mine["results"]} == {"Alpha", "Beta"}
+        assert client.get(ann_url(workspace.slug), {"search": "delta"}).json()["count"] == 1
+        assert client.get(ann_url(workspace.slug), {"book": str(first.id)}).json()["count"] == 1
+        assert client.get(ann_url(workspace.slug), {"kind": "bookmark"}).json()["count"] == 1
+
+    def test_markdown_export(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        item = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, title="Orbits", authors=["Ada Author"])
+        client.post(
+            ann_url(workspace.slug, item.id),
+            {**HIGHLIGHT, "quote": "Line one\nLine two", "note": "My thought"},
+            format="json",
+        )
+        other_client.post(
+            ann_url(workspace.slug, item.id), {**HIGHLIGHT, "quote": "someone else", "visibility": 1}, format="json"
+        )
+        response = client.get(ann_url(workspace.slug, suffix="export/"), {"book": str(item.id)})
+        assert response.status_code == 200 and response["Content-Type"].startswith("text/markdown")
+        assert "Orbits - notes.md" in response["Content-Disposition"]
+        text = response.content.decode()
+        assert text.startswith("# Orbits\n") and "*Ada Author*" in text and "## Chapter 2" in text
+        assert "> Line one\n> Line two" in text and "My thought" in text
+        assert "someone else" not in text  # only the user's own annotations
+
+    def test_guests_have_no_annotations(self, library, people, workspace):
+        guest_client = people["guest"][1]
+        assert guest_client.get(ann_url(workspace.slug)).status_code == 403
+        assert guest_client.get(ann_url(workspace.slug, suffix="export/")).status_code == 403
