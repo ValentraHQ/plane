@@ -1186,6 +1186,28 @@ class TestLibrarySearch:
         listed = client.get(url(workspace.slug), {"file_format": "pdf"})
         assert listed.status_code == 200 and [b["title"] for b in listed.json()["results"]] == ["Comet PDF"]
 
+    def test_a_big_book_does_not_crowd_out_the_others(self, library, people, workspace):
+        from plane.utils.book_search import index_book_text
+
+        user, client = people["member"]
+        big = book(workspace, user, status=Book.STATUS_READY, chapter_count=600, title="Big", language="en")
+        BookChapter.objects.bulk_create(
+            [
+                BookChapter(
+                    workspace=workspace, book=big, index=i, spine_id=f"c{i}", href=f"c{i}.xhtml",
+                    content_key=f"k{i}", text="Comets and comets and comets again.", title=f"Big {i}",
+                )
+                for i in range(600)
+            ]
+        )  # fmt: skip
+        index_book_text(big.id)
+        indexed(workspace, user, ["Once, a comet passed by."], title="Small", language="en")
+        data = search(client, workspace.slug, q="comet")
+        by_title = {r["book"]["title"]: r for r in data["results"]}
+        assert set(by_title) == {"Big", "Small"}
+        assert by_title["Big"]["chapter_matches"] == 600 and len(by_title["Big"]["passages"]) == 3
+        assert by_title["Small"]["chapter_matches"] == 1
+
     def test_search_settings_on_the_book(self, library, people, workspace):
         user, client = people["member"]
         other_client = people["other"][1]

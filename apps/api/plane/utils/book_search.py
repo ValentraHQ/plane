@@ -23,8 +23,8 @@ from functools import lru_cache
 from django.conf import settings
 from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
 from django.db import connection
-from django.db.models import F, Q, TextField, Value
-from django.db.models.functions import Cast, Coalesce
+from django.db.models import Count, F, Q, TextField, Value, Window
+from django.db.models.functions import Cast, Coalesce, RowNumber
 from django.utils import timezone
 
 # Module imports
@@ -66,7 +66,6 @@ LANGUAGE_CONFIGS = {
 
 MIN_QUERY = 2
 MAX_QUERY = 200
-CONTENT_CANDIDATES = 500  # best-ranked chapters considered per configuration
 PASSAGES_PER_BOOK = 3
 SNIPPET = 90
 
@@ -161,23 +160,31 @@ def metadata_matches(books, query):
 
 
 def content_matches(books, query):
-    """{book_id: (best rank, [chapter rows])} for books whose text matches, best chapters first."""
+    """{book_id: {"rank", "count", "chapters"}} for books whose text matches: the best rank, how
+    many chapters match, and the best PASSAGES_PER_BOOK chapters (rows with index, title, rank)."""
     if not settings.LIBRARY_FULLTEXT_SEARCH:
         return {}
     searchable = books.filter(search_content=True, status=Book.STATUS_READY, text_indexed_at__isnull=False)
     results = {}
-    for config in searchable.values_list("search_config", flat=True).distinct():
+    # order_by(): the model's default ordering would otherwise make the configs repeat
+    for config in set(searchable.order_by().values_list("search_config", flat=True).distinct()):
         search = SearchQuery(query, config=config or "simple", search_type="websearch")
-        rows = (
-            BookChapter.objects.filter(book__in=searchable.filter(search_config=config), search_vector=search)
-            .annotate(rank=SearchRank(F("search_vector"), search, cover_density=True))
-            .order_by("-rank")
-            .values("book_id", "index", "title", "rank")[:CONTENT_CANDIDATES]
+        matching = BookChapter.objects.filter(book__in=searchable.filter(search_config=config), search_vector=search)
+        counts = dict(matching.order_by().values("book_id").annotate(n=Count("id")).values_list("book_id", "n"))
+        # the best chapters of every book (not of all books together, or one big book crowds the rest out)
+        best = (
+            matching.annotate(rank=SearchRank(F("search_vector"), search, cover_density=True))
+            .annotate(position=Window(RowNumber(), partition_by=[F("book_id")], order_by=F("rank").desc()))
+            .filter(position__lte=PASSAGES_PER_BOOK)
+            .order_by("book_id", "position")
+            .values("book_id", "index", "title", "rank")
         )
-        for row in rows:
-            best, chapters = results.setdefault(row["book_id"], (0.0, []))
-            chapters.append(row)
-            results[row["book_id"]] = (max(best, float(row["rank"])), chapters)
+        for row in best:
+            entry = results.setdefault(
+                row["book_id"], {"rank": 0.0, "count": counts.get(row["book_id"], 0), "chapters": []}
+            )
+            entry["chapters"].append(row)
+            entry["rank"] = max(entry["rank"], float(row["rank"]))
     return results
 
 

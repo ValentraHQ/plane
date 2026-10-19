@@ -21,7 +21,6 @@ from plane.db.models import Book, BookChapter, BookReadingState
 from plane.utils.book_access import viewable_books
 from plane.utils.book_search import (
     MIN_QUERY,
-    PASSAGES_PER_BOOK,
     clean_query,
     content_matches,
     metadata_matches,
@@ -67,7 +66,7 @@ class LibrarySearchEndpoint(LibraryBaseEndpoint):
         details = metadata_matches(books, query)
         text = content_matches(books, query) if include_text else {}
         scores = {
-            book_id: DETAILS_WEIGHT * details.get(book_id, 0.0) + text.get(book_id, (0.0, []))[0]
+            book_id: DETAILS_WEIGHT * details.get(book_id, 0.0) + (text[book_id]["rank"] if book_id in text else 0.0)
             for book_id in {*details, *text}
         }
         titles = dict(Book.objects.filter(pk__in=scores).values_list("id", "title"))
@@ -82,7 +81,7 @@ class LibrarySearchEndpoint(LibraryBaseEndpoint):
         wanted = {
             (book_id, row["index"]): row
             for book_id in page_ids
-            for row in text.get(book_id, (0.0, []))[1][:PASSAGES_PER_BOOK]
+            for row in (text[book_id]["chapters"] if book_id in text else [])
         }
         chapter_texts = {}
         if wanted:
@@ -99,8 +98,8 @@ class LibrarySearchEndpoint(LibraryBaseEndpoint):
             if book is None:
                 continue
             passages = []
-            chapters = text.get(book_id, (0.0, []))[1]
-            for row in chapters[:PASSAGES_PER_BOOK]:
+            found_in = text.get(book_id, {"count": 0, "chapters": []})
+            for row in found_in["chapters"]:
                 found = passage(chapter_texts.get((book_id, row["index"]), ""), query, terms)
                 if found:
                     passages.append({"chapter": row["index"], "chapter_title": row["title"], **found})
@@ -109,7 +108,7 @@ class LibrarySearchEndpoint(LibraryBaseEndpoint):
                     "book": BookSerializer(book, context=context).data,
                     "matched_details": book_id in details,
                     "matched_text": book_id in text,
-                    "chapter_matches": len(chapters),
+                    "chapter_matches": found_in["count"],
                     "passages": passages,
                 }
             )
