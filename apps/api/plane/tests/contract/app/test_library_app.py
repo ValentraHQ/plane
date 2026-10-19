@@ -764,6 +764,10 @@ class TestLibraryAnnotations:
         # ... and the other member can no longer reach the book or the annotation
         assert other_client.get(ann_url(workspace.slug, item.id)).status_code == 404
         assert other_client.get(ann_url(workspace.slug)).json()["count"] == 0
+        # sharing the book again brings the annotation back, still shared
+        owner_client.patch(url(workspace.slug, item.id), {"visibility": 1}, format="json")
+        assert [a["id"] for a in owner_client.get(ann_url(workspace.slug, item.id)).json()] == [theirs["id"]]
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 1
 
     def test_admins_can_remove_shared_annotations_only(self, library, people, workspace):
         user, client = people["member"]
