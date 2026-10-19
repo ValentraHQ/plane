@@ -368,8 +368,10 @@ BOOK_MAX_CHAPTERS = int(os.environ.get("BOOK_MAX_CHAPTERS", 5000))
 BOOK_PROCESSING_MAX_RETRIES = int(os.environ.get("BOOK_PROCESSING_MAX_RETRIES", 3))
 # lifetime of signed links to book files, covers and chapter resources
 BOOK_SIGNED_URL_EXPIRATION = int(os.environ.get("BOOK_SIGNED_URL_EXPIRATION", 600))
-# longest excerpt that can be copied from a book into a shared wiki page
+# longest excerpt that can be copied from a book into a wiki page
 BOOK_EXCERPT_LIMIT = int(os.environ.get("BOOK_EXCERPT_LIMIT", 1500))
+# all excerpts copied into one wiki page together
+BOOK_EXCERPT_PAGE_LIMIT = int(os.environ.get("BOOK_EXCERPT_PAGE_LIMIT", 10000))
 
 # Unsplash Access key
 UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")

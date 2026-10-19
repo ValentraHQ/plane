@@ -516,6 +516,8 @@ def test_instance_config_exposes_the_library_flag(settings, api_client):
     )
     config = api_client.get("/api/instances/").json()["config"]
     assert config["is_library_enabled"] is True and config["book_file_size_limit"] == settings.BOOK_FILE_SIZE_LIMIT
+    assert config["book_excerpt_limit"] == settings.BOOK_EXCERPT_LIMIT
+    assert config["book_excerpt_page_limit"] == settings.BOOK_EXCERPT_PAGE_LIMIT
 
 
 def chapter(workspace, owner_book, index, text, title=""):
@@ -834,3 +836,230 @@ class TestLibraryAnnotations:
         guest_client = people["guest"][1]
         assert guest_client.get(ann_url(workspace.slug)).status_code == 403
         assert guest_client.get(ann_url(workspace.slug, suffix="export/")).status_code == 403
+
+
+# --- wiki pages from books, and links to pages, projects and work items (PR 5) ---
+
+
+def lib_url(slug, suffix):
+    return f"/api/workspaces/{slug}/library/{suffix}"
+
+
+PASSAGE_TEXT = "It was the best of times,\nit was the worst of times. <script>x</script>"
+
+
+@pytest.fixture
+def wiki_setup(db, workspace, settings):
+    from plane.db.models import Page, WikiSpace
+
+    settings.WEB_URL = settings.APP_BASE_URL = "https://plane.example"
+    space = WikiSpace.objects.create(workspace=workspace, name="Reading", identifier="READ")
+    closed = WikiSpace.objects.create(
+        workspace=workspace, name="Closed", identifier="CLOSED", access=WikiSpace.ACCESS_RESTRICTED
+    )
+    return {"space": space, "closed": closed, "Page": Page}
+
+
+def quotable(workspace, owner, **extra):
+    item = readable(workspace, owner, **extra)
+    BookChapter.objects.filter(book=item, index=1).update(text=PASSAGE_TEXT, character_count=len(PASSAGE_TEXT))
+    return item
+
+
+def wiki_body(space, **extra):
+    return {
+        "space": str(space.id),
+        "passages": [
+            {"chapter": 1, "start_offset": 0, "quote": "It was the best of times, it was", "note": "<b>Dickens</b>"}
+        ],
+        **extra,
+    }
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryWiki:
+    def test_a_page_from_a_passage_is_private_and_points_back(self, library, people, workspace, wiki_setup):
+        from plane.utils.wiki_permissions import viewable_wiki_pages
+
+        user, client = people["member"]
+        other = people["other"][0]
+        item = quotable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, title="Two Cities", authors=["Dickens"])
+        response = client.post(
+            url(workspace.slug, item.id, "wiki-pages/"), wiki_body(wiki_setup["space"]), format="json"
+        )
+        assert response.status_code == 201, response.json()
+        data = response.json()
+        page = wiki_setup["Page"].objects.get(pk=data["page"]["id"])
+        assert page.name == "Notes on Two Cities" and page.owned_by_id == user.id
+        assert page.space_id == wiki_setup["space"].id and page.access == wiki_setup["Page"].PRIVATE_ACCESS
+        html = page.description_html
+        assert "<blockquote><p>It was the best of times, it was</p></blockquote>" in html
+        assert "&lt;b&gt;Dickens&lt;/b&gt;" in html and "<b>" not in html  # notes are escaped
+        assert f"https://plane.example/{workspace.slug}/library/books/{item.id}/read?chapter=1&amp;offset=0" in html
+        assert "<h3>Chapter 2</h3>" in html and "<strong>Source:</strong>" in html and "by Dickens" in html
+        assert data["link"]["origin"] == "created" and data["link"]["target"]["space_id"] == str(wiki_setup["space"].id)
+        # private: nobody else sees the page, nor the link on the (workspace) book
+        assert not viewable_wiki_pages(workspace.slug, other).filter(pk=page.id).exists()
+        assert people["other"][1].get(url(workspace.slug, item.id, "links/")).json() == []
+        assert [link["target"]["id"] for link in client.get(url(workspace.slug, item.id, "links/")).json()] == [
+            str(page.id)
+        ]
+
+    def test_quotes_must_come_from_the_book_within_the_limits(self, library, people, workspace, wiki_setup, settings):
+        user, client = people["member"]
+        item = quotable(workspace, user)
+        post = lambda body: client.post(url(workspace.slug, item.id, "wiki-pages/"), body, format="json")  # noqa: E731
+        space = wiki_setup["space"]
+        invented = wiki_body(space, passages=[{"chapter": 1, "quote": "It was a dark and stormy night"}])
+        assert post(invented).json()["code"] == "quote_not_found"
+        # line breaks and spacing do not matter
+        spaced = wiki_body(space, passages=[{"chapter": 1, "quote": "best of   times, it\nwas the worst"}])
+        assert post(spaced).status_code == 201
+        assert post(wiki_body(space, passages=[{"chapter": 7, "quote": "x"}])).json()["code"] == "unknown_chapter"
+        assert post(wiki_body(space, passages=[{"chapter": 1}])).status_code == 400  # neither quote nor note
+        settings.BOOK_EXCERPT_LIMIT = 10
+        too_long = post(wiki_body(space))
+        assert too_long.status_code == 400 and too_long.json()["code"] == "excerpt_too_long"
+        settings.BOOK_EXCERPT_LIMIT, settings.BOOK_EXCERPT_PAGE_LIMIT = 100, 40
+        many = [{"chapter": 1, "quote": "it was the worst of times"}] * 2
+        assert post(wiki_body(space, passages=many)).json()["code"] == "excerpts_too_long"
+        assert wiki_setup["Page"].objects.filter(space=space).count() == 1
+
+    def test_sharing_needs_confirmation(self, library, people, workspace, wiki_setup):
+        from plane.utils.wiki_permissions import viewable_wiki_pages
+
+        user, client = people["member"]
+        other, other_client = people["other"]
+        item = quotable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        endpoint = url(workspace.slug, item.id, "wiki-pages/")
+        refused = client.post(endpoint, wiki_body(wiki_setup["space"], share=True), format="json")
+        assert refused.status_code == 400 and refused.json()["code"] == "confirmation_required"
+        assert not wiki_setup["Page"].objects.filter(space=wiki_setup["space"]).exists()
+        shared = client.post(
+            endpoint, wiki_body(wiki_setup["space"], share=True, confirm_excerpts=True, title="Club"), format="json"
+        )
+        assert shared.status_code == 201 and shared.json()["page"]["access"] == wiki_setup["Page"].PUBLIC_ACCESS
+        page_id = shared.json()["page"]["id"]
+        assert viewable_wiki_pages(workspace.slug, other).filter(pk=page_id).exists()
+        assert [link["target"]["name"] for link in other_client.get(url(workspace.slug, item.id, "links/")).json()] == [
+            "Club"
+        ]
+
+    def test_the_wiki_rules_apply(self, library, people, workspace, wiki_setup):
+        from plane.db.models import PageRestriction, WikiSpaceMember
+
+        user, client = people["member"]
+        owner_of_parent = people["admin2"][0]
+        item = quotable(workspace, user)
+        endpoint = url(workspace.slug, item.id, "wiki-pages/")
+        # a restricted space the user is not in
+        assert client.post(endpoint, wiki_body(wiki_setup["closed"]), format="json").status_code == 400
+        # a viewer of the space cannot create pages
+        WikiSpaceMember.objects.create(
+            workspace=workspace, space=wiki_setup["space"], member=user, role=WikiSpaceMember.ROLE_VIEWER
+        )
+        assert client.post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 403
+        WikiSpaceMember.objects.filter(member=user).update(role=WikiSpaceMember.ROLE_EDITOR)
+        # nor under an edit-restricted parent
+        parent = wiki_setup["Page"].objects.create(
+            workspace=workspace, space=wiki_setup["space"], is_global=True, name="Locked", owned_by=owner_of_parent
+        )
+        PageRestriction.objects.create(
+            workspace=workspace, page=parent, kind=PageRestriction.EDIT, member=owner_of_parent
+        )
+        body = wiki_body(wiki_setup["space"], parent=str(parent.id))
+        assert client.post(endpoint, body, format="json").status_code == 403
+        # someone else's personal book, a book that is not ready, guests
+        assert people["other"][1].post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 404
+        Book.objects.filter(pk=item.id).update(status=Book.STATUS_PROCESSING)
+        assert client.post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 409
+        assert people["guest"][1].post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 403
+
+    def test_links_need_both_ends_visible(self, library, people, workspace, wiki_setup):
+        from plane.db.models import Issue, Project, ProjectMember, State
+
+        user, client = people["member"]
+        other, other_client = people["other"]
+        admin, admin_client = people["admin2"]
+        project = Project.objects.create(name="Moon", identifier="MOON", workspace=workspace, created_by=user)
+        State.objects.create(name="Todo", group="unstarted", default=True, project=project, workspace=workspace)
+        ProjectMember.objects.create(project=project, member=user, role=15, is_active=True)
+        ProjectMember.objects.create(project=project, member=admin, role=15, is_active=True)
+        issue = Issue.objects.create(name="Landing", project=project, workspace=workspace, created_by=user)
+        page = wiki_setup["Page"].objects.create(
+            workspace=workspace, space=wiki_setup["space"], is_global=True, name="Handbook", owned_by=user
+        )
+        shared = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, title="Shared")
+        personal = readable(workspace, user, title="Mine")
+        links = url(workspace.slug, shared.id, "links/")
+
+        found = client.get(
+            lib_url(workspace.slug, "link-targets/"), {"target_type": "issue", "search": "moon-1"}
+        ).json()
+        assert [t["id"] for t in found] == [str(issue.id)] and found[0]["project_identifier"] == "MOON"
+        assert other_client.get(lib_url(workspace.slug, "link-targets/"), {"target_type": "issue"}).json() == []
+        assert [
+            t["name"] for t in client.get(lib_url(workspace.slug, "link-targets/"), {"target_type": "project"}).json()
+        ] == ["Moon"]
+
+        for target_type, target in (("issue", issue), ("project", project), ("page", page)):
+            created = client.post(links, {"target_type": target_type, "target_id": str(target.id)}, format="json")
+            assert created.status_code == 201, created.json()
+        again = client.post(links, {"target_type": "issue", "target_id": str(issue.id)}, format="json")
+        assert again.status_code == 200  # no duplicates
+        client.post(
+            url(workspace.slug, personal.id, "links/"),
+            {"target_type": "issue", "target_id": str(issue.id)},
+            format="json",
+        )
+
+        assert {link["target_type"] for link in client.get(links).json()} == {"issue", "project", "page"}
+        # the other member is not in the project: only the page link shows
+        assert [link["target_type"] for link in other_client.get(links).json()] == ["page"]
+        # someone outside the project cannot link to it, or see what is linked to its work item
+        refused = other_client.post(links, {"target_type": "issue", "target_id": str(issue.id)}, format="json")
+        assert refused.status_code == 404
+        issue_books = {"target_type": "issue", "target_id": str(issue.id)}
+        assert other_client.get(lib_url(workspace.slug, "links/"), issue_books).json() == []
+        # a project member sees the workspace book on the work item, never the personal one
+        seen = admin_client.get(lib_url(workspace.slug, "links/"), issue_books).json()
+        assert [link["book_detail"]["title"] for link in seen] == ["Shared"]
+        assert sorted(
+            link["book_detail"]["title"] for link in client.get(lib_url(workspace.slug, "links/"), issue_books).json()
+        ) == ["Mine", "Shared"]
+
+        # project guests cannot link work items
+        ProjectMember.objects.filter(member=admin).update(role=5)
+        project.guest_view_all_features = True
+        project.save()
+        guest_try = admin_client.post(
+            url(workspace.slug, shared.id, "links/"),
+            {"target_type": "issue", "target_id": str(issue.id)},
+            format="json",
+        )
+        assert guest_try.status_code == 403
+
+    def test_who_may_remove_a_link(self, library, people, workspace, wiki_setup):
+        user, client = people["member"]
+        other, other_client = people["other"]
+        admin_client = people["admin2"][1]
+        item = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+
+        def page(name):
+            return wiki_setup["Page"].objects.create(
+                workspace=workspace, space=wiki_setup["space"], is_global=True, name=name, owned_by=user
+            )
+
+        endpoint = url(workspace.slug, item.id, "links/")
+        by_other = other_client.post(
+            endpoint, {"target_type": "page", "target_id": str(page("A").id)}, format="json"
+        ).json()
+        by_owner = client.post(endpoint, {"target_type": "page", "target_id": str(page("B").id)}, format="json").json()
+        assert by_other["permissions"]["can_delete"] is True  # they added it
+        assert other_client.delete(lib_url(workspace.slug, f"links/{by_owner['id']}/")).status_code == 403
+        assert (
+            admin_client.delete(lib_url(workspace.slug, f"links/{by_owner['id']}/")).status_code == 204
+        )  # editor of the book
+        assert other_client.delete(lib_url(workspace.slug, f"links/{by_other['id']}/")).status_code == 204
+        assert client.get(endpoint).json() == []

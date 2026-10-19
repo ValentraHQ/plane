@@ -19,6 +19,13 @@ from plane.app.views.library.annotations import (
     BookAnnotationListEndpoint,
     MyAnnotationsEndpoint,
 )
+from plane.app.views.library.links import (
+    BookLinkDetailEndpoint,
+    BookLinkListEndpoint,
+    BookWikiPageEndpoint,
+    LinkedBooksEndpoint,
+    LinkTargetSearchEndpoint,
+)
 from plane.app.views.library.reading import (
     BookReadingStateEndpoint,
     BookSearchEndpoint,
@@ -43,6 +50,31 @@ urlpatterns = [
         "workspaces/<str:slug>/library/annotations/<uuid:annotation_id>/",
         AnnotationDetailEndpoint.as_view(),
         name="library-annotation",
+    ),
+    path(
+        "workspaces/<str:slug>/library/books/<uuid:book_id>/links/",
+        BookLinkListEndpoint.as_view(),
+        name="library-book-links",
+    ),
+    path(
+        "workspaces/<str:slug>/library/books/<uuid:book_id>/wiki-pages/",
+        BookWikiPageEndpoint.as_view(),
+        name="library-book-wiki-pages",
+    ),
+    path(
+        "workspaces/<str:slug>/library/links/",
+        LinkedBooksEndpoint.as_view(),
+        name="library-linked-books",
+    ),
+    path(
+        "workspaces/<str:slug>/library/links/<uuid:link_id>/",
+        BookLinkDetailEndpoint.as_view(),
+        name="library-link",
+    ),
+    path(
+        "workspaces/<str:slug>/library/link-targets/",
+        LinkTargetSearchEndpoint.as_view(),
+        name="library-link-targets",
     ),
     path(
         "workspaces/<str:slug>/library/books/<uuid:book_id>/annotations/",

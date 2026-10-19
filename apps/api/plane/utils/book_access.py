@@ -17,6 +17,11 @@ Annotations (highlights, notes, bookmarks) are their author's. A shared annotati
 everyone who can see the book, and only while the book is a workspace book. Only the author edits
 an annotation; workspace admins may also remove shared ones.
 
+Links between a book and a page, project or work item are shown only to people who can see both
+ends (`visible_links`), so a link never reveals a private book or a target someone cannot open.
+Adding one needs the book and the target to be visible, and for a project or work item a member
+role in that project. The person who added it, and whoever can edit the book, may remove it.
+
 Lists use `viewable_books` (a single query); single books use `book_permissions`. Both must agree;
 a test checks that for every user and book. Sharing with specific people or groups would add one
 more condition to each, backed by its own table.
@@ -26,7 +31,17 @@ more condition to each, backed by its own table.
 from django.db.models import Q
 
 # Module imports
-from plane.db.models import Book, BookAnnotation, BookCollection, WorkspaceMember
+from plane.db.models import (
+    Book,
+    BookAnnotation,
+    BookCollection,
+    BookLink,
+    Issue,
+    Page,
+    Project,
+    ProjectMember,
+    WorkspaceMember,
+)
 
 ADMIN = 20
 MEMBER = 15
@@ -116,3 +131,56 @@ def annotation_permissions(annotation, user, role):
         and annotation.book.visibility == Book.VISIBILITY_WORKSPACE
     )
     return {"can_edit": is_author, "can_delete": is_author or (shared and role is not None and role >= ADMIN)}
+
+
+# --- links to pages, projects and work items ---
+
+
+def _memberships(workspace_id, user):
+    return ProjectMember.objects.filter(
+        workspace_id=workspace_id, member=user, is_active=True, project__archived_at__isnull=True
+    )
+
+
+def viewable_projects(workspace_id, user, min_role=None):
+    """Projects the user is an active member of (with at least `min_role`, if given)."""
+    memberships = _memberships(workspace_id, user)
+    if min_role is not None:
+        memberships = memberships.filter(role__gte=min_role)
+    return Project.objects.filter(id__in=memberships.values("project_id"))
+
+
+def viewable_issues(workspace_id, user):
+    """Work items the user can open: in their projects; guests see only their own unless the
+    project lets guests view everything. Drafts are left out."""
+    memberships = _memberships(workspace_id, user)
+    full = memberships.filter(Q(role__gte=MEMBER) | Q(project__guest_view_all_features=True))
+    return Issue.objects.filter(workspace_id=workspace_id, is_draft=False).filter(
+        Q(project_id__in=full.values("project_id"))
+        | Q(project_id__in=memberships.values("project_id"), created_by=user)
+    )
+
+
+def viewable_pages(slug, user):
+    """Wiki and project pages the user can see, through the page resolver."""
+    from plane.utils.page_access import viewable_project_pages
+    from plane.utils.wiki_permissions import viewable_wiki_pages
+
+    ids = viewable_wiki_pages(slug, user).values("id").union(viewable_project_pages(slug, user).values("id"))
+    return Page.objects.filter(id__in=ids)
+
+
+def visible_links(workspace, user, books, role=_UNSET):
+    """Links of `books` whose target the user can see as well."""
+    if role is _UNSET:
+        role = library_role(user, workspace.id)
+    books = books.filter(id__in=viewable_books(workspace.id, user, role=role).values("id"))
+    return BookLink.objects.filter(workspace=workspace, book__in=books).filter(
+        Q(target_type=BookLink.TARGET_PAGE, page__in=viewable_pages(workspace.slug, user))
+        | Q(target_type=BookLink.TARGET_PROJECT, project__in=viewable_projects(workspace.id, user))
+        | Q(target_type=BookLink.TARGET_ISSUE, issue__in=viewable_issues(workspace.id, user))
+    )
+
+
+def link_permissions(link, user, book_perms):
+    return {"can_delete": link.created_by_id == user.id or bool(book_perms and book_perms["can_edit"])}

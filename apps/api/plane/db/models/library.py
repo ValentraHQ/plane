@@ -329,3 +329,73 @@ class BookAnnotation(BaseModel):
 
     def __str__(self):
         return f"{self.kind} {self.book_id} #{self.chapter}:{self.start_offset}"
+
+
+class BookLink(BaseModel):
+    """
+    A link between a book and a page (wiki or project), a project or a work item. A link is shown
+    only to people who can see both ends, so it never reveals a book or a target to anyone else.
+
+    `origin` tells pages created from the book (with the passage they started from) apart from
+    links added by hand.
+    """
+
+    TARGET_PAGE = "page"
+    TARGET_PROJECT = "project"
+    TARGET_ISSUE = "issue"
+    TARGET_CHOICES = ((TARGET_PAGE, "Page"), (TARGET_PROJECT, "Project"), (TARGET_ISSUE, "Work item"))
+    ORIGIN_LINKED = "linked"
+    ORIGIN_CREATED = "created"
+    ORIGIN_CHOICES = ((ORIGIN_LINKED, "Linked"), (ORIGIN_CREATED, "Created from the book"))
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="book_links")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="links")
+    target_type = models.CharField(max_length=16, choices=TARGET_CHOICES)
+    page = models.ForeignKey("db.Page", null=True, blank=True, on_delete=models.CASCADE, related_name="book_links")
+    project = models.ForeignKey(
+        "db.Project", null=True, blank=True, on_delete=models.CASCADE, related_name="book_links"
+    )
+    issue = models.ForeignKey("db.Issue", null=True, blank=True, on_delete=models.CASCADE, related_name="book_links")
+    origin = models.CharField(max_length=16, choices=ORIGIN_CHOICES, default=ORIGIN_LINKED)
+    # where in the book a created page came from
+    chapter = models.PositiveIntegerField(null=True, blank=True)
+    start_offset = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Book Link"
+        verbose_name_plural = "Book Links"
+        db_table = "book_links"
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["book", "page"],
+                condition=Q(deleted_at__isnull=True, page__isnull=False),
+                name="book_link_unique_page",
+            ),
+            models.UniqueConstraint(
+                fields=["book", "project"],
+                condition=Q(deleted_at__isnull=True, project__isnull=False),
+                name="book_link_unique_project",
+            ),
+            models.UniqueConstraint(
+                fields=["book", "issue"],
+                condition=Q(deleted_at__isnull=True, issue__isnull=False),
+                name="book_link_unique_issue",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(target_type="page", page__isnull=False, project__isnull=True, issue__isnull=True)
+                    | Q(target_type="project", page__isnull=True, project__isnull=False, issue__isnull=True)
+                    | Q(target_type="issue", page__isnull=True, project__isnull=True, issue__isnull=False)
+                ),
+                name="book_link_one_target",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["page"], name="book_link_page_idx"),
+            models.Index(fields=["issue"], name="book_link_issue_idx"),
+            models.Index(fields=["project"], name="book_link_project_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.book_id} -> {self.target_type}"

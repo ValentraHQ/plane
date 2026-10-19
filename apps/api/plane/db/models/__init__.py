@@ -56,6 +56,7 @@ from .library import (
     BookChapter,
     BookCollection,
     BookCollectionItem,
+    BookLink,
     BookReadingState,
     BookResource,
     ReaderPreferences,
