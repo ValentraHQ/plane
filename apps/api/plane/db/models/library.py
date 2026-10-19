@@ -281,3 +281,51 @@ class ReaderPreferences(BaseModel):
 
     def __str__(self):
         return f"reader preferences of {self.user_id}"
+
+
+class BookAnnotation(BaseModel):
+    """
+    A highlight, note or bookmark in a book. Private to its author unless shared; sharing is only
+    possible on workspace books, where every reader of the book can see it.
+
+    The anchor follows the reader's positions: chapter index, start / end character offsets into the
+    chapter's text, and the quoted text with a little context on each side, so the passage can be found
+    again if offsets drift (e.g. after the book is processed again).
+    """
+
+    KIND_HIGHLIGHT = "highlight"
+    KIND_NOTE = "note"
+    KIND_BOOKMARK = "bookmark"
+    KIND_CHOICES = ((KIND_HIGHLIGHT, "Highlight"), (KIND_NOTE, "Note"), (KIND_BOOKMARK, "Bookmark"))
+    COLORS = ("yellow", "green", "blue", "pink", "purple")
+    VISIBILITY_PRIVATE = 0
+    VISIBILITY_SHARED = 1
+    VISIBILITY_CHOICES = ((VISIBILITY_PRIVATE, "Private"), (VISIBILITY_SHARED, "Shared"))
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="book_annotations")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="annotations")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="book_annotations")
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=KIND_HIGHLIGHT)
+    color = models.CharField(max_length=16, blank=True, default="yellow")
+    chapter = models.PositiveIntegerField()
+    start_offset = models.PositiveIntegerField()
+    end_offset = models.PositiveIntegerField()
+    quote = models.TextField(blank=True, default="")
+    prefix = models.CharField(max_length=64, blank=True, default="")
+    suffix = models.CharField(max_length=64, blank=True, default="")
+    note = models.TextField(blank=True, default="")
+    visibility = models.PositiveSmallIntegerField(choices=VISIBILITY_CHOICES, default=VISIBILITY_PRIVATE)
+
+    class Meta:
+        verbose_name = "Book Annotation"
+        verbose_name_plural = "Book Annotations"
+        db_table = "book_annotations"
+        ordering = ("chapter", "start_offset", "created_at")
+        indexes = [
+            models.Index(fields=["book", "user"], name="book_annotation_book_user_idx"),
+            models.Index(fields=["book", "visibility"], name="book_annotation_shared_idx"),
+            models.Index(fields=["user", "workspace", "created_at"], name="book_annot_user_recent_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.kind} {self.book_id} #{self.chapter}:{self.start_offset}"

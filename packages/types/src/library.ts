@@ -188,3 +188,45 @@ export type TBookSearchResult = {
 };
 
 export type TBookSearchResponse = { query: string; results: TBookSearchResult[]; truncated: boolean };
+
+export type TBookAnnotationKind = "highlight" | "note" | "bookmark";
+export type TBookAnnotationColor = "yellow" | "green" | "blue" | "pink" | "purple";
+
+export enum EBookAnnotationVisibility {
+  PRIVATE = 0,
+  SHARED = 1,
+}
+
+/** A highlight, note or bookmark, anchored like a reading position (chapter + character offsets + quote). */
+export type TBookAnnotation = {
+  id: string;
+  book: string;
+  book_title: string;
+  user: string;
+  user_detail: { id: string; display_name: string };
+  kind: TBookAnnotationKind;
+  color: TBookAnnotationColor | "";
+  chapter: number;
+  chapter_title: string;
+  start_offset: number;
+  end_offset: number;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  note: string;
+  visibility: EBookAnnotationVisibility;
+  permissions: { can_edit: boolean; can_delete: boolean };
+  created_at: string;
+  updated_at: string;
+};
+
+export type TBookAnnotationCreate = Pick<TBookAnnotation, "kind" | "chapter" | "start_offset" | "end_offset"> &
+  Partial<Pick<TBookAnnotation, "color" | "quote" | "prefix" | "suffix" | "note" | "visibility">>;
+
+export type TBookAnnotationUpdate = Partial<Pick<TBookAnnotation, "color" | "note" | "visibility">>;
+
+export type TBookAnnotationListResponse = {
+  count: number;
+  counts: Partial<Record<TBookAnnotationKind, number>>;
+  results: TBookAnnotation[];
+};

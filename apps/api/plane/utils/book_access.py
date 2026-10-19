@@ -13,6 +13,10 @@ The one place that decides who may do what with a library book.
 Collections (shelves) follow the same rules: personal ones are the owner's, workspace ones are
 visible to admins and members and managed by their owner and workspace admins.
 
+Annotations (highlights, notes, bookmarks) are their author's. A shared annotation is visible to
+everyone who can see the book, and only while the book is a workspace book. Only the author edits
+an annotation; workspace admins may also remove shared ones.
+
 Lists use `viewable_books` (a single query); single books use `book_permissions`. Both must agree;
 a test checks that for every user and book. Sharing with specific people or groups would add one
 more condition to each, backed by its own table.
@@ -22,7 +26,7 @@ more condition to each, backed by its own table.
 from django.db.models import Q
 
 # Module imports
-from plane.db.models import Book, BookCollection, WorkspaceMember
+from plane.db.models import Book, BookAnnotation, BookCollection, WorkspaceMember
 
 ADMIN = 20
 MEMBER = 15
@@ -96,3 +100,19 @@ def viewable_collections(workspace_id, user, role=_UNSET):
     return queryset.filter(
         Q(visibility=Book.VISIBILITY_WORKSPACE) | Q(visibility=Book.VISIBILITY_PERSONAL, owner_id=user.id)
     )
+
+
+def visible_annotations(user, books):
+    """Annotations the user can see on the given books (which the caller already checked they can see)."""
+    return BookAnnotation.objects.filter(book__in=books).filter(
+        Q(user_id=user.id) | Q(visibility=BookAnnotation.VISIBILITY_SHARED, book__visibility=Book.VISIBILITY_WORKSPACE)
+    )
+
+
+def annotation_permissions(annotation, user, role):
+    is_author = annotation.user_id == user.id
+    shared = (
+        annotation.visibility == BookAnnotation.VISIBILITY_SHARED
+        and annotation.book.visibility == Book.VISIBILITY_WORKSPACE
+    )
+    return {"can_edit": is_author, "can_delete": is_author or (shared and role is not None and role >= ADMIN)}

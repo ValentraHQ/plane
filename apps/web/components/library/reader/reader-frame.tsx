@@ -5,7 +5,7 @@
  */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
-import type { TBookChapterContent, TReaderPreferences } from "@plane/types";
+import type { TBookAnnotation, TBookChapterContent, TReaderPreferences } from "@plane/types";
 
 /**
  * One chapter of a book, rendered in an iframe that is sandboxed without scripts (the HTML was
@@ -17,6 +17,16 @@ import type { TBookChapterContent, TReaderPreferences } from "@plane/types";
  */
 
 export type TReaderFramePosition = { offset: number; quote: string; fraction: number; textLength: number };
+
+/** The current text selection as an anchor, with its box in the frame's coordinates. */
+export type TReaderSelection = {
+  start: number;
+  end: number;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  rect: { top: number; left: number; bottom: number; right: number };
+};
 
 export type TReaderFrameHandle = {
   /** move one page (paginated) or one screen (scroll); false when already at the edge of the chapter */
@@ -30,6 +40,13 @@ export type TReaderFrameHandle = {
   position: () => TReaderFramePosition | null;
   pageInfo: () => { page: number; pages: number };
   focus: () => void;
+  selection: () => TReaderSelection | null;
+  clearSelection: () => void;
+  /** draw annotations of this chapter; returns the ids that could not be placed in the text */
+  showAnnotations: (annotations: TBookAnnotation[], currentUserId: string | undefined) => string[];
+  pageOfOffset: (offset: number) => number;
+  /** box of an annotation's first mark, in the frame's coordinates */
+  annotationRect: (id: string) => TReaderSelection["rect"] | null;
 };
 
 type Props = {
@@ -43,6 +60,9 @@ type Props = {
   onKey: (event: KeyboardEvent) => void;
   /** tap / swipe navigation inside the page */
   onTurn: (direction: "next" | "previous") => void;
+  /** the selection changed (null when cleared) */
+  onSelection: (selection: TReaderSelection | null) => void;
+  onAnnotationClick: (id: string) => void;
 };
 
 export const THEMES = {
@@ -60,6 +80,22 @@ const FONTS: Record<TReaderPreferences["font_family"], string | null> = {
 };
 
 const MARGINS = { narrow: 16, normal: 40, wide: 88 };
+
+export const HIGHLIGHTS: Record<string, string> = {
+  yellow: "rgba(255, 213, 0, 0.42)",
+  green: "rgba(52, 199, 89, 0.32)",
+  blue: "rgba(10, 132, 255, 0.28)",
+  pink: "rgba(255, 55, 135, 0.28)",
+  purple: "rgba(175, 82, 222, 0.30)",
+};
+const HIGHLIGHTS_DARK: Record<string, string> = {
+  yellow: "rgba(255, 214, 10, 0.32)",
+  green: "rgba(48, 209, 88, 0.30)",
+  blue: "rgba(64, 156, 255, 0.34)",
+  pink: "rgba(255, 55, 135, 0.34)",
+  purple: "rgba(191, 90, 242, 0.36)",
+};
+const CONTEXT = 32;
 
 const escapeAttr = (value: string) => value.replace(/[&"<>]/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -97,6 +133,13 @@ img { max-width: 100% !important; max-height: ${paginated ? "calc(100vh - 80px)"
 table { max-width: 100%; border-collapse: collapse; }
 h1, h2, h3, h4, h5, h6 { break-after: avoid; line-height: 1.25 !important; }
 ::selection { background: ${theme === THEMES.dark ? "#3a5a8c" : "#b7d3ff"}; }
+mark.plane-annotation { color: inherit !important; border-radius: 2px; cursor: pointer; padding: 0 !important; }
+${Object.entries(theme === THEMES.dark ? HIGHLIGHTS_DARK : HIGHLIGHTS)
+  .map(([color, value]) => `mark.plane-annotation.plane-color-${color} { background-color: ${value} !important; }`)
+  .join("\n")}
+mark.plane-annotation.plane-kind-note { background-color: transparent !important; text-decoration: underline 2px dotted; text-underline-offset: 3px; }
+mark.plane-annotation.plane-others { opacity: 0.75; text-decoration: underline 1px dashed; text-underline-offset: 3px; }
+mark.plane-annotation.plane-flash { outline: 2px solid ${theme.link}; outline-offset: 1px; }
 `;
 }
 
@@ -152,11 +195,83 @@ function offsetOf(doc: Document, target: Node, localOffset: number) {
   return total;
 }
 
+const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** Remove drawn annotation marks, keeping their text (and therefore every offset). */
+function clearMarks(doc: Document) {
+  const marks = Array.from(doc.querySelectorAll("mark.plane-annotation"));
+  const parents = new Set<Node>();
+  for (const mark of marks) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    parents.add(parent);
+  }
+  parents.forEach((parent) => parent.normalize());
+}
+
+/**
+ * Where an annotation's passage is now: its stored offsets when the text there still matches,
+ * otherwise the occurrence of its quote that best fits its context and old position.
+ */
+function resolveAnchor(text: string, annotation: TBookAnnotation): [number, number] | null {
+  const { start_offset: start, end_offset: end, quote } = annotation;
+  if (!quote) return end > start && end <= text.length ? [start, end] : null;
+  if (normalize(text.slice(start, end)) === normalize(quote)) return [start, end];
+  let best: [number, number] | null = null;
+  let bestScore = -Infinity;
+  for (let index = text.indexOf(quote); index >= 0; index = text.indexOf(quote, index + 1)) {
+    const before = text.slice(Math.max(0, index - CONTEXT), index);
+    const after = text.slice(index + quote.length, index + quote.length + CONTEXT);
+    const score =
+      (annotation.prefix && before.endsWith(annotation.prefix.slice(-16)) ? 2 : 0) +
+      (annotation.suffix && after.startsWith(annotation.suffix.slice(0, 16)) ? 2 : 0) -
+      Math.abs(index - start) / Math.max(1, text.length);
+    if (score > bestScore) {
+      bestScore = score;
+      best = [index, index + quote.length];
+    }
+  }
+  return best;
+}
+
+/** Wrap [start, end) of the document's text in marks, one per text node it crosses. */
+function wrapRange(doc: Document, start: number, end: number, make: () => HTMLElement) {
+  let position = 0;
+  for (const node of textNodes(doc)) {
+    const length = node.data.length;
+    const from = Math.max(start, position);
+    const to = Math.min(end, position + length);
+    if (from < to) {
+      let target = node;
+      if (from > position) target = target.splitText(from - position);
+      if (to < position + length) target.splitText(to - from);
+      const mark = make();
+      target.parentNode?.insertBefore(mark, target);
+      mark.appendChild(target);
+    }
+    position += length;
+    if (position >= end) break;
+  }
+}
+
 export const ReaderFrame = forwardRef<TReaderFrameHandle, Props>(function ReaderFrame(props, ref) {
-  const { chapter, preferences, systemDark, onReady, onPositionChange, onChapterLink, onKey, onTurn } = props;
+  const {
+    chapter,
+    preferences,
+    systemDark,
+    onReady,
+    onPositionChange,
+    onChapterLink,
+    onKey,
+    onTurn,
+    onSelection,
+    onAnnotationClick,
+  } = props;
   const frame = useRef<HTMLIFrameElement>(null);
-  const callbacks = useRef({ onReady, onPositionChange, onChapterLink, onKey, onTurn });
-  callbacks.current = { onReady, onPositionChange, onChapterLink, onKey, onTurn };
+  const callbacks = useRef({ onReady, onPositionChange, onChapterLink, onKey, onTurn, onSelection, onAnnotationClick });
+  callbacks.current = { onReady, onPositionChange, onChapterLink, onKey, onTurn, onSelection, onAnnotationClick };
   const paginated = preferences.layout === "paginated";
 
   const doc = () => frame.current?.contentDocument ?? null;
@@ -333,7 +448,83 @@ export const ReaderFrame = forwardRef<TReaderFrameHandle, Props>(function Reader
       };
     },
     focus: () => frame.current?.contentWindow?.focus(),
+    selection: () => readSelection(),
+    clearSelection: () => doc()?.getSelection()?.removeAllRanges(),
+    showAnnotations: (annotations, currentUserId) => {
+      const d = doc();
+      if (!d) return annotations.map((a) => a.id);
+      clearMarks(d);
+      const text = d.body.textContent ?? "";
+      const orphans: string[] = [];
+      // later starts first is not needed: wrapping never changes the text, so offsets stay valid
+      for (const annotation of annotations) {
+        if (annotation.kind === "bookmark") continue;
+        const span = resolveAnchor(text, annotation);
+        if (!span) {
+          orphans.push(annotation.id);
+          continue;
+        }
+        wrapRange(d, span[0], span[1], () => {
+          const mark = d.createElement("mark");
+          mark.className = [
+            "plane-annotation",
+            `plane-kind-${annotation.kind}`,
+            annotation.kind === "highlight" ? `plane-color-${annotation.color || "yellow"}` : "",
+            annotation.user !== currentUserId ? "plane-others" : "",
+          ].join(" ");
+          mark.dataset.annotationId = annotation.id;
+          return mark;
+        });
+      }
+      return orphans;
+    },
+    pageOfOffset: (offset) => {
+      const d = doc();
+      const el = scroller();
+      const spot = d && locate(d, offset);
+      if (!d || !el || !spot) return 1;
+      const range = d.createRange();
+      range.setStart(spot.node, Math.min(spot.offset, spot.node.data.length));
+      const rect = range.getBoundingClientRect();
+      const box = rect.width || rect.height ? rect : (spot.node.parentElement?.getBoundingClientRect() ?? rect);
+      if (paginated) return Math.floor((box.left + el.scrollLeft) / pageWidth()) + 1;
+      return Math.floor((box.top + el.scrollTop) / Math.max(1, el.clientHeight)) + 1;
+    },
+    annotationRect: (id) => {
+      const mark = doc()?.querySelector(`mark[data-annotation-id="${CSS.escape(id)}"]`);
+      if (!mark) return null;
+      const r = mark.getBoundingClientRect();
+      return { top: r.top, left: r.left, bottom: r.bottom, right: r.right };
+    },
   }));
+
+  function readSelection(): TReaderSelection | null {
+    const d = doc();
+    const selection = d?.getSelection();
+    if (!d || !selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!d.body.contains(range.commonAncestorContainer)) return null;
+    // a boundary's offset = the length of the text from the chapter's start up to it
+    const offsetAt = (container: Node, offset: number) => {
+      const before = d.createRange();
+      before.setStart(d.body, 0);
+      before.setEnd(container, offset);
+      return before.toString().length;
+    };
+    const start = offsetAt(range.startContainer, range.startOffset);
+    const end = offsetAt(range.endContainer, range.endOffset);
+    if (end <= start) return null;
+    const text = d.body.textContent ?? "";
+    const rect = range.getBoundingClientRect();
+    return {
+      start,
+      end,
+      quote: text.slice(start, end).slice(0, 4000),
+      prefix: text.slice(Math.max(0, start - CONTEXT), start),
+      suffix: text.slice(end, end + CONTEXT),
+      rect: { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right },
+    };
+  }
 
   // a new chapter: write the document, then wire its events
   useEffect(() => {
@@ -344,6 +535,11 @@ export const ReaderFrame = forwardRef<TReaderFrameHandle, Props>(function Reader
       if (!d) return;
       applyStyles();
       d.addEventListener("click", (event) => {
+        const mark = (event.target as Element | null)?.closest?.("mark.plane-annotation") as HTMLElement | null;
+        if (mark && !d.getSelection()?.toString()) {
+          callbacks.current.onAnnotationClick(mark.dataset.annotationId ?? "");
+          return;
+        }
         const anchor = (event.target as Element | null)?.closest?.("a[href]");
         if (anchor) {
           event.preventDefault();
@@ -361,6 +557,12 @@ export const ReaderFrame = forwardRef<TReaderFrameHandle, Props>(function Reader
         else if (x > width * 0.75) callbacks.current.onTurn("next");
       });
       d.addEventListener("keydown", (event) => callbacks.current.onKey(event));
+      // report selections once the reader stops dragging (and when the selection is cleared)
+      let selectionTimer: number | undefined;
+      d.addEventListener("selectionchange", () => {
+        window.clearTimeout(selectionTimer);
+        selectionTimer = window.setTimeout(() => callbacks.current.onSelection(readSelection()), 250);
+      });
       // swipe on touch screens
       let startX: number | null = null;
       d.addEventListener("touchstart", (event) => (startX = event.touches[0]?.clientX ?? null), { passive: true });

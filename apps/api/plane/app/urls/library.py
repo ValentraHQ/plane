@@ -13,6 +13,12 @@ from plane.app.views.library.base import (
     BookReprocessEndpoint,
     BookUploadCompleteEndpoint,
 )
+from plane.app.views.library.annotations import (
+    AnnotationDetailEndpoint,
+    AnnotationExportEndpoint,
+    BookAnnotationListEndpoint,
+    MyAnnotationsEndpoint,
+)
 from plane.app.views.library.reading import (
     BookReadingStateEndpoint,
     BookSearchEndpoint,
@@ -27,6 +33,22 @@ from plane.app.views.library.collection import (
 )
 
 urlpatterns = [
+    path("workspaces/<str:slug>/library/annotations/", MyAnnotationsEndpoint.as_view(), name="library-annotations"),
+    path(
+        "workspaces/<str:slug>/library/annotations/export/",
+        AnnotationExportEndpoint.as_view(),
+        name="library-annotations-export",
+    ),
+    path(
+        "workspaces/<str:slug>/library/annotations/<uuid:annotation_id>/",
+        AnnotationDetailEndpoint.as_view(),
+        name="library-annotation",
+    ),
+    path(
+        "workspaces/<str:slug>/library/books/<uuid:book_id>/annotations/",
+        BookAnnotationListEndpoint.as_view(),
+        name="library-book-annotations",
+    ),
     path(
         "workspaces/<str:slug>/library/continue-reading/",
         ContinueReadingEndpoint.as_view(),

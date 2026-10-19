@@ -18,6 +18,7 @@ import { renderFormattedDate } from "@plane/utils";
 // hooks
 import { useLibrary } from "@/hooks/store/use-library";
 import { useAppRouter } from "@/hooks/use-app-router";
+import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { BookActionsMenu } from "./book-actions-menu";
@@ -50,11 +51,18 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 
 type Props = { workspaceSlug: string; bookId: string };
 
+const notesService = new LibraryService();
+
 export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }: Props) {
   const router = useAppRouter();
   const { getBookById, fetchBook, downloadBook, reprocessBook, setFilters } = useLibrary();
   const book = getBookById(bookId);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const { data: notes } = useSWR(
+    book?.format === "epub" ? `LIBRARY_BOOK_NOTES_${bookId}` : null,
+    () => notesService.listMyAnnotations(workspaceSlug, { book: bookId, limit: 1 }),
+    { revalidateOnFocus: false }
+  );
   const processing = book?.status === EBookStatus.PROCESSING || book?.status === EBookStatus.UPLOADING;
   const { error, isLoading } = useSWR(
     `LIBRARY_BOOK_${bookId}`,
@@ -229,6 +237,33 @@ export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }
               </Fact>
             ))}
           </dl>
+          {notes && notes.count > 0 && (
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-12 text-secondary">
+              <span>
+                Your notes:{" "}
+                {[
+                  notes.counts.highlight && `${notes.counts.highlight} highlights`,
+                  notes.counts.note && `${notes.counts.note} notes`,
+                  notes.counts.bookmark && `${notes.counts.bookmark} bookmarks`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+              <Link
+                href={`/${workspaceSlug}/library/notes?book=${book.id}`}
+                className="text-accent-primary hover:underline"
+              >
+                See all
+              </Link>
+              <button
+                type="button"
+                className="text-accent-primary hover:underline"
+                onClick={() => void notesService.exportAnnotations(workspaceSlug, book.id).catch(() => undefined)}
+              >
+                Export Markdown
+              </button>
+            </p>
+          )}
           {book.subjects.length > 0 && <p className="text-12 text-tertiary">Subjects: {book.subjects.join(" · ")}</p>}
         </div>
       </div>
