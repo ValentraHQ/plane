@@ -20,6 +20,7 @@ import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { HIGHLIGHTS } from "./reader/reader-frame";
+import { plural } from "./utils";
 
 const service = new LibraryService();
 const KIND_LABEL = { highlight: "Highlight", note: "Note", bookmark: "Bookmark" } as const;
@@ -125,9 +126,9 @@ export const LibraryNotes = observer(function LibraryNotes({ workspaceSlug }: { 
       {data && (
         <p className="text-12 text-tertiary" aria-live="polite">
           {data.count} {data.count === 1 ? "item" : "items"}
-          {data.counts.highlight ? ` · ${data.counts.highlight} highlights` : ""}
-          {data.counts.note ? ` · ${data.counts.note} notes` : ""}
-          {data.counts.bookmark ? ` · ${data.counts.bookmark} bookmarks` : ""}
+          {data.counts.highlight ? ` · ${plural(data.counts.highlight, "highlight")}` : ""}
+          {data.counts.note ? ` · ${plural(data.counts.note, "note")}` : ""}
+          {data.counts.bookmark ? ` · ${plural(data.counts.bookmark, "bookmark")}` : ""}
         </p>
       )}
       {data && data.results.length === 0 && (

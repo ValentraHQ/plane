@@ -8,8 +8,8 @@ Workspace members can upload EPUB and PDF books to a personal library or to the 
 EPUBs are processed in the background into sanitized chapters for the in-browser reader. PDFs are
 stored with their metadata and can be downloaded; reading PDFs in the browser comes in a later PR.
 
-This document covers the foundation (PR 1 of the library series), the library UI (PR 2) and the
-reader (PR 3). Annotations, wiki integration and search across books follow in later PRs.
+This document covers the foundation (PR 1 of the library series), the library UI (PR 2), the
+reader (PR 3) and annotations (PR 4). Wiki integration and search across books follow in later PRs.
 
 ## Reading (web)
 
@@ -37,6 +37,17 @@ _Mark as unread_.
   - Progress is the share of the book's characters before the reading point.
   - Reaching the end of the last chapter marks the book finished.
   - Reading state is private: nobody else sees your position, progress or status.
+
+## Highlights, notes and bookmarks (web)
+
+- **Highlight:** select text in the reader. A toolbar offers five colours (yellow, green, blue, pink, purple), _Note_ and _Copy_. Clicking a highlight opens it: change the colour, add or edit a note, share it, or delete it.
+- **Note:** _Note_ on the toolbar saves the selection with a note (a note needs text). Notes are drawn with a dotted underline.
+- **Bookmark:** the bookmark button in the reader header marks the current page; pressed again, it removes the bookmark.
+- **Notes panel** (speech-bubble button): everything in this book, grouped by chapter, with _All / Mine / Shared_ when others have shared something. Clicking an entry opens its passage. _Export Markdown_ downloads your own annotations of this book.
+- **Notes & highlights** (`/library/notes`, linked from the library sidebar): all your annotations across the books you can still see, newest first, with search (quote and note text), a kind filter and _Export Markdown_. Each entry links to `/library/books/<id>/read?chapter=<n>&offset=<o>`, which opens the reader at that passage. The book page shows a summary (_Your notes: 3 highlights · 1 note_) with _See all_ and _Export Markdown_.
+- **Stable references.** An annotation stores its chapter, start and end character offsets into the chapter text, the quoted text and 32 characters before and after it. When a chapter is drawn, the offsets are used if the text there still matches the quote; otherwise every occurrence of the quote is scored by how well its surroundings match and how close it is to the old offset, and the best one is used. If the quote is gone (the book was replaced by a different edition), the annotation is kept and listed as _not found in the text_. Highlights are drawn with `<mark>` elements around text nodes, which never changes the text the offsets refer to.
+- **Private by default.** An annotation is visible only to its author until they tick _Share with everyone who can read this book_. Only annotations on workspace books can be shared. Shared annotations are shown with a dashed underline and the author's name, and only the author can change them. A workspace admin can delete a shared annotation (moderation) but cannot see private ones. When a book is made personal again, the shared annotations of other people disappear for everyone but their authors; sharing the book again brings them back.
+- **Export** includes only your own annotations: a `# <book>` section per book, a `## <chapter>` heading per chapter, each quote as a `>` block followed by its note, and bookmarks as list items.
 
 ## Using the library (web)
 
@@ -168,6 +179,10 @@ All endpoints are under `/api/workspaces/<slug>/library/`. They return 404 when 
 | PATCH / DELETE       | `collections/<id>/`                 | Owner or workspace admin; only the owner changes `visibility`, and a collection holding personal books cannot be shared.                                                                                                                     |
 | POST                 | `collections/<id>/books/`           | `{book_ids: [...]}` (at most 200): adds books the user can see. Personal books cannot go into a shared collection.                                                                                                                           |
 | DELETE               | `collections/<id>/books/<book_id>/` | Removes one book.                                                                                                                                                                                                                            |
+| GET / POST           | `books/<id>/annotations/`           | GET: the annotations of this book the user can see (their own and shared ones), filtered by `chapter`, `kind` and `mine=true`. POST `{kind, chapter, start_offset, end_offset, quote, prefix, suffix, color, note, visibility}`; 409 if the book is not a ready EPUB. |
+| PATCH / DELETE       | `annotations/<id>/`                 | PATCH `{color, note, visibility}`: author only. DELETE: the author, or a workspace admin for a shared annotation. Annotations the user cannot see return 404.                                                                                |
+| GET                  | `annotations/`                      | The user's own annotations across visible books, newest first: `book`, `kind`, `search`, `limit` ≤ 200, `offset`. Returns `{count, counts: {highlight, note, bookmark}, results}`.                                                         |
+| GET                  | `annotations/export/`               | The user's own annotations as Markdown (`text/markdown` attachment), for all books or one `?book=<id>`.                                                                                                                                     |
 
 The book list also takes `reading=unread|reading|completed` (the user's own status), `tag=<name>` and `collection=<id>`, and its search also matches tags. Book
 objects include `tags`, `owner_detail` and the user's own `my_reading` (`{progress, status, last_opened_at}`), and the detail view adds the `collection_ids` the user can
@@ -248,7 +263,11 @@ book and user) and `reader_preferences` (one row per user).
 - **`book_collections`:** owner, workspace, name, description, visibility, sort order.
 - **`book_collection_items`:** collection, book, sort order; unique per collection and book.
 
-Reading state and annotations are added with the PRs that use them.
+Migration `0129_library_annotations` adds `book_annotations`:
+
+- **`book_annotations`:** workspace, book, user (the author), kind (`highlight`, `note`, `bookmark`), colour, chapter, start and end offsets, quote, prefix and suffix (64 characters each), note, visibility (0 private, 1 shared). Indexed by book and user, by book and visibility (shared annotations), and by user and creation date (the Notes page). It is soft-deleted like other Plane models.
+
+Validation: offsets must be in order and span at most 20,000 characters; highlights and notes need a selection; notes need text; the quote is at most 4,000 characters (the browser sends the start of longer passages, and the offsets cover the rest) and notes at most 10,000.
 
 ## Tests
 
@@ -262,6 +281,7 @@ Reading state and annotations are added with the PRs that use them.
   - list/single consistency for every user and book, cross-workspace access
   - upload validation, the separate size limit, duplicates, upload completion
   - metadata edits, archive, search, delete, reprocess, downloads, chapter resource resolution
+  - annotations: kinds and validation, private by default, sharing only on workspace books, shared annotations hidden when a book becomes personal, admin moderation, the cross-book list, Markdown export, guests
 
 ## Limitations
 

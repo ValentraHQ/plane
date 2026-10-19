@@ -218,19 +218,21 @@ function clearMarks(doc: Document) {
 function resolveAnchor(text: string, annotation: TBookAnnotation): [number, number] | null {
   const { start_offset: start, end_offset: end, quote } = annotation;
   if (!quote) return end > start && end <= text.length ? [start, end] : null;
-  if (normalize(text.slice(start, end)) === normalize(quote)) return [start, end];
+  // long passages are saved with only their first 4,000 characters as the quote
+  const length = Math.max(quote.length, end - start);
+  if (normalize(text.slice(start, start + quote.length)) === normalize(quote)) return [start, start + length];
   let best: [number, number] | null = null;
   let bestScore = -Infinity;
   for (let index = text.indexOf(quote); index >= 0; index = text.indexOf(quote, index + 1)) {
     const before = text.slice(Math.max(0, index - CONTEXT), index);
-    const after = text.slice(index + quote.length, index + quote.length + CONTEXT);
+    const after = text.slice(index + length, index + length + CONTEXT);
     const score =
       (annotation.prefix && before.endsWith(annotation.prefix.slice(-16)) ? 2 : 0) +
       (annotation.suffix && after.startsWith(annotation.suffix.slice(0, 16)) ? 2 : 0) -
       Math.abs(index - start) / Math.max(1, text.length);
     if (score > bestScore) {
       bestScore = score;
-      best = [index, index + quote.length];
+      best = [index, Math.min(text.length, index + length)];
     }
   }
   return best;

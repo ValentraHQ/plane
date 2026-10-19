@@ -24,7 +24,7 @@ import { libraryErrorMessage } from "@/store/library.store";
 import { BookActionsMenu } from "./book-actions-menu";
 import { BookCover } from "./book-cover";
 import { BookEditModal } from "./book-edit-modal";
-import { STATUS_LABELS, bookAuthors, bookTitle, formatBytes } from "./utils";
+import { STATUS_LABELS, bookAuthors, bookTitle, formatBytes, plural } from "./utils";
 
 function TocList({ entries, depth = 0 }: { entries: TBookTocEntry[]; depth?: number }) {
   return (
@@ -242,9 +242,9 @@ export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }
               <span>
                 Your notes:{" "}
                 {[
-                  notes.counts.highlight && `${notes.counts.highlight} highlights`,
-                  notes.counts.note && `${notes.counts.note} notes`,
-                  notes.counts.bookmark && `${notes.counts.bookmark} bookmarks`,
+                  notes.counts.highlight && plural(notes.counts.highlight, "highlight"),
+                  notes.counts.note && plural(notes.counts.note, "note"),
+                  notes.counts.bookmark && plural(notes.counts.bookmark, "bookmark"),
                 ]
                   .filter(Boolean)
                   .join(" · ")}
