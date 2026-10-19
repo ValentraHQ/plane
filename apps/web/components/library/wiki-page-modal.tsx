@@ -210,6 +210,7 @@ export const WikiPageFromBookModal = observer(function WikiPageFromBookModal(pro
                     <label className="flex flex-col gap-1 text-13 text-secondary">
                       <span className="font-medium">Space</span>
                       <select
+                        aria-label="Space"
                         value={spaceId}
                         onChange={(e) => setSpaceId(e.target.value)}
                         disabled={!spaces?.length}
@@ -227,6 +228,7 @@ export const WikiPageFromBookModal = observer(function WikiPageFromBookModal(pro
                     <label className="flex flex-col gap-1 text-13 text-secondary">
                       <span className="font-medium">Under</span>
                       <select
+                        aria-label="Under"
                         value={parentId}
                         onChange={(e) => setParentId(e.target.value)}
                         className="h-8 rounded-md border border-subtle bg-surface-1 px-2 text-13 text-primary"
