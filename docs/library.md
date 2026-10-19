@@ -9,7 +9,7 @@ EPUBs are processed in the background into sanitized chapters for the in-browser
 stored with their metadata and can be downloaded; reading PDFs in the browser comes in a later PR.
 
 This document covers the foundation (PR 1 of the library series), the library UI (PR 2), the
-reader (PR 3) and annotations (PR 4). Wiki integration and search across books follow in later PRs.
+reader (PR 3), annotations (PR 4) and wiki integration (PR 5). Search across books follows in a later PR.
 
 ## Reading (web)
 
@@ -48,6 +48,27 @@ _Mark as unread_.
 - **Stable references.** An annotation stores its chapter, start and end character offsets into the chapter text, the quoted text and 32 characters before and after it. When a chapter is drawn, the offsets are used if the text there still matches the quote; otherwise every occurrence of the quote is scored by how well its surroundings match and how close it is to the old offset, and the best one is used. If the quote is gone (the book was replaced by a different edition), the annotation is kept and listed as _not found in the text_. Highlights are drawn with `<mark>` elements around text nodes, which never changes the text the offsets refer to.
 - **Private by default.** An annotation is visible only to its author until they tick _Share with everyone who can read this book_. Only annotations on workspace books can be shared. Shared annotations are shown with a dashed underline and the author's name, and only the author can change them. A workspace admin can delete a shared annotation (moderation) but cannot see private ones. When a book is made personal again, the other members lose access to it and to their annotations on it, and the owner no longer sees them; sharing the book again brings them back.
 - **Export** includes only your own annotations: a `# <book>` section per book, a `## <chapter>` heading per chapter, each quote as a `>` block followed by its note, and bookmarks as list items.
+
+## Wiki pages and links (web)
+
+- **A wiki page from the book.** *Wiki page* appears on the selection toolbar, on a highlight or note, and in the reader's Notes panel (all your highlights and notes of the book, which you can tick off one by one). The dialog lets you choose:
+  - the title (by default *Notes on <book>*)
+  - a space you can write in, and optionally a parent page
+  - an introduction
+  - who can see the page
+- **The page** contains the introduction, then per chapter each quote as a blockquote with your note and an *Open this passage in the book* link, then a source line (title, authors, publisher, year) linking to the book. It is created through the wiki's own create path, so space roles, parent restrictions and private pages apply as in the wiki. The book page lists it under *Linked* as *created from the book*, with a link to the passage.
+- **Private by default.** The page is private (only you) unless you choose *Everyone in <space>*.
+  - Sharing shows how many characters will be quoted and a copyright reminder, and needs the box *I may share these excerpts…* ticked.
+  - The server refuses a shared page without that confirmation.
+  - When the book is personal, the dialog says that others will see the excerpts but cannot open the book.
+- **Excerpt limits** apply to every page:
+  - each quote is at most `BOOK_EXCERPT_LIMIT` characters (1,500); the dialog shortens longer ones at a word boundary and says so
+  - a page quotes at most `BOOK_EXCERPT_PAGE_LIMIT` characters in total (10,000)
+  - the server checks every quote against the chapter text (ignoring whitespace), so a page can only quote what the book says
+- **Links.** *Link…* on the book page links the book to a work item (search by name or by ID such as `WEB-12`), a project or a page. A work item shows a **Books** section with its linked books, *Link a book* and *Unlink*.
+  - A link is shown only to people who can see both the book and the target, so it never reveals a personal book or a project someone is not in.
+  - Linking to a project or work item needs a member role in that project (not guest).
+  - The person who added a link and anyone who can edit the book can remove it.
 
 ## Using the library (web)
 
@@ -182,6 +203,11 @@ All endpoints are under `/api/workspaces/<slug>/library/`. They return 404 when 
 | GET / POST           | `books/<id>/annotations/`           | GET: the annotations of this book the user can see (their own and shared ones), filtered by `chapter`, `kind` and `mine=true`. POST `{kind, chapter, start_offset, end_offset, quote, prefix, suffix, color, note, visibility}`; 409 if the book is not a ready EPUB. |
 | PATCH / DELETE       | `annotations/<id>/`                 | PATCH `{color, note, visibility}`: author only. DELETE: the author, or a workspace admin for a shared annotation. Annotations the user cannot see return 404.                                                                                |
 | GET                  | `annotations/`                      | The user's own annotations across visible books, newest first: `book`, `kind`, `search`, `limit` ≤ 200, `offset`. Returns `{count, counts: {highlight, note, bookmark}, results}`.                                                         |
+| POST                 | `books/<id>/wiki-pages/`            | `{space, parent?, title?, intro?, passages: [{chapter, start_offset, quote, note}] (1–100), share, confirm_excerpts}`: creates a wiki page (private unless `share`). 400 with `code` `excerpt_too_long`, `excerpts_too_long`, `quote_not_found`, `unknown_chapter` or `confirmation_required`; 409 if the book is not a ready EPUB. Returns `{page, link}`. |
+| GET / POST           | `books/<id>/links/`                 | The book's links the user can see (both ends visible); POST `{target_type: page\|project\|issue, target_id}` (an existing link returns 200).                                                                                                      |
+| DELETE               | `links/<id>/`                       | The person who added the link, or an editor of the book.                                                                                                                                                                                     |
+| GET                  | `links/?target_type=&target_id=`    | Books linked to a page, project or work item, with `book_detail`.                                                                                                                                                                            |
+| GET                  | `link-targets/?target_type=&search=` | Pages, projects (member role) or work items (member role; `KEY-12` matches the ID) the user could link to, at most 20.                                                                                                                      |
 | GET                  | `annotations/export/`               | The user's own annotations as Markdown (`text/markdown` attachment), for all books or one `?book=<id>`.                                                                                                                                     |
 
 The book list also takes `reading=unread|reading|completed` (the user's own status), `tag=<name>` and `collection=<id>`, and its search also matches tags. Book
@@ -209,7 +235,8 @@ Book objects include:
 | `BOOK_MAX_CHAPTERS`           | `5000`               |                                                                                                                                                                        |
 | `BOOK_PROCESSING_MAX_RETRIES` | `3`                  | Retries for storage or network errors.                                                                                                                                 |
 | `BOOK_SIGNED_URL_EXPIRATION`  | `600`                | Seconds.                                                                                                                                                               |
-| `BOOK_EXCERPT_LIMIT`          | `1500`               | Characters, for wiki excerpts (used from PR 5).                                                                                                                        |
+| `BOOK_EXCERPT_LIMIT`          | `1500`               | Characters per quote copied into a wiki page.                                                                                                                          |
+| `BOOK_EXCERPT_PAGE_LIMIT`     | `10000`              | Characters quoted in one wiki page, all quotes together.                                                                                                               |
 
 The proxy (`apps/proxy/Caddyfile.ce`) applies `BOOK_FILE_SIZE_LIMIT` to the storage route only. This is
 safe because every upload to storage needs a signed policy that fixes its own maximum size. Keep
@@ -263,6 +290,8 @@ book and user) and `reader_preferences` (one row per user).
 - **`book_collections`:** owner, workspace, name, description, visibility, sort order.
 - **`book_collection_items`:** collection, book, sort order; unique per collection and book.
 
+Migration `0130_library_links` adds `book_links`: workspace, book, `target_type` (`page`, `project`, `issue`) with exactly one of `page`, `project`, `issue` set (a check constraint), `origin` (`linked` or `created`), and for created pages the `chapter` and `start_offset` of the first passage. Unique per book and target. No existing table changes.
+
 Migration `0129_library_annotations` adds `book_annotations`:
 
 - **`book_annotations`:** workspace, book, user (the author), kind (`highlight`, `note`, `bookmark`), colour, chapter, start and end offsets, quote, prefix and suffix (64 characters each), note, visibility (0 private, 1 shared). Indexed by book and user, by book and visibility (shared annotations), and by user and creation date (the Notes page). It is soft-deleted like other Plane models.
@@ -282,10 +311,14 @@ Validation: offsets must be in order and span at most 20,000 characters; highlig
   - upload validation, the separate size limit, duplicates, upload completion
   - metadata edits, archive, search, delete, reprocess, downloads, chapter resource resolution
   - annotations: kinds and validation, private by default, sharing only on workspace books, shared annotations hidden when a book becomes personal, admin moderation, the cross-book list, Markdown export, guests
+  - wiki pages from books: private by default with a link back, escaping, quotes checked against the book, excerpt limits, confirmation for sharing, the wiki's space and restriction rules
+  - links: visible only with both ends, project membership for projects and work items, guests, duplicates, who may remove
 
 ## Limitations
 
 - PDFs are not readable in the browser yet; they can be downloaded.
+- *Wiki page* always creates a new page; adding passages to an existing page is done by copying them in the editor.
+- Linked books are shown on the book page and on work items. Wiki and project pages show their source in the page text, not in a separate panel.
 - SVG images, embedded fonts and audio/video inside EPUBs are not served: SVG is dropped, and the reader uses its own fonts.
 - Processing time is bounded by a 15-minute soft limit per attempt.
 - Covers come from the EPUB only; PDFs have no cover.
