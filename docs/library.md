@@ -9,7 +9,7 @@ EPUBs are processed in the background into sanitized chapters for the in-browser
 stored with their metadata and can be downloaded; reading PDFs in the browser comes in a later PR.
 
 This document covers the foundation (PR 1 of the library series), the library UI (PR 2), the
-reader (PR 3), annotations (PR 4) and wiki integration (PR 5). Search across books follows in a later PR.
+reader (PR 3), annotations (PR 4), wiki integration (PR 5) and search across books (PR 6).
 
 ## Reading (web)
 
@@ -69,6 +69,19 @@ _Mark as unread_.
   - A link is shown only to people who can see both the book and the target, so it never reveals a personal book or a project someone is not in.
   - Linking to a project or work item needs a member role in that project (not guest).
   - The person who added a link and anyone who can edit the book can remove it.
+
+## Searching the library (web)
+
+- **Library > Search inside books** (also offered under the grid's search box once you type) searches every book you can see, both its details and its text.
+- **Ranking:** books are ranked by how well they match, and a book *about* the query (a match in its title, authors, tags, subjects, publisher, ISBN or description) ranks above one that only mentions it. A match in the title counts most.
+- **Results:** each book shows up to three passages, with the match highlighted, and how many chapters match. A passage opens the reader at that place with the match selected (`/read?chapter=<n>&find=<text>&occurrence=<k>`).
+- **Queries** work as on the web: `"white rabbit"` for a phrase, `rabbit -hole` to leave a word out, `or` between alternatives. Words are matched with the stemming of the book's language, so *hurrying* finds *hurried* in an English book. Book details are matched without stemming, and partial words match too (*kepl* finds Kepler).
+- **Filters:** format, shelf (*Only me* / *Shared with workspace*), and *Search inside books* (off: details only).
+- **Privacy.** Search starts from the books you can see (`viewable_books`), so another person's personal book never contributes a result, a passage, a count or a rank. That includes workspace admins. Archived books are searched only with `archived=true`.
+- **Opting out.** Whoever can edit a book can keep its text out of search (*Include the text of this book in library search* in *Edit details*). The book is then still found by its details. `LIBRARY_FULLTEXT_SEARCH=0` turns text search off for the whole instance.
+- **Indexing.** After a book is processed, `index_book` (a Celery task) stores a `tsvector` for each chapter, using the text search configuration of the book's language (`english`, `french`, … and `simple` when the language is unknown), with a GIN index. Indexing runs separately, so a slow index never fails a book. Changing the language indexes the text again. Each chapter is indexed up to `BOOK_INDEX_CHAPTER_LIMIT` characters (500,000; a `tsvector` holds at most 1 MB).
+- **Rebuilding:** `python manage.py library_reindex --missing` (or `--all`, `--book <id>…`, `--dry-run`).
+- **Performance on the preview:** a search that matches all 1,000 chapters of the 72 MB test book returns in about 0.7 s, including the HTTP round trip.
 
 ## Using the library (web)
 
@@ -207,6 +220,7 @@ All endpoints are under `/api/workspaces/<slug>/library/`. They return 404 when 
 | GET / POST           | `books/<id>/links/`                 | The book's links the user can see (both ends visible); POST `{target_type: page\|project\|issue, target_id}` (an existing link returns 200).                                                                                                      |
 | DELETE               | `links/<id>/`                       | The person who added the link, or an editor of the book.                                                                                                                                                                                     |
 | GET                  | `links/?target_type=&target_id=`    | Books linked to a page, project or work item, with `book_detail`.                                                                                                                                                                            |
+| GET                  | `search/?q=`                        | Books ranked by details and text: `{query, count, limit, offset, content_searched, results: [{book, matched_details, matched_text, chapter_matches, passages: [{chapter, chapter_title, match, occurrence, before, after}]}]}`. Takes `content=false`, `file_format`, `visibility`, `tag`, `archived=true`, `limit` ≤ 50, `offset`; at least 2 characters. |
 | GET                  | `link-targets/?target_type=&search=` | Pages, projects (member role) or work items (member role; `KEY-12` matches the ID) the user could link to, at most 20.                                                                                                                      |
 | GET                  | `annotations/export/`               | The user's own annotations as Markdown (`text/markdown` attachment), for all books or one `?book=<id>`.                                                                                                                                     |
 
@@ -237,6 +251,8 @@ Book objects include:
 | `BOOK_SIGNED_URL_EXPIRATION`  | `600`                | Seconds.                                                                                                                                                               |
 | `BOOK_EXCERPT_LIMIT`          | `1500`               | Characters per quote copied into a wiki page.                                                                                                                          |
 | `BOOK_EXCERPT_PAGE_LIMIT`     | `10000`              | Characters quoted in one wiki page, all quotes together.                                                                                                               |
+| `LIBRARY_FULLTEXT_SEARCH`     | `1`                  | `0` searches book details only. Each book can also opt out.                                                                                                             |
+| `BOOK_INDEX_CHAPTER_LIMIT`    | `500000`             | Characters of one chapter that are indexed for search.                                                                                                                  |
 
 The proxy (`apps/proxy/Caddyfile.ce`) applies `BOOK_FILE_SIZE_LIMIT` to the storage route only. This is
 safe because every upload to storage needs a signed policy that fixes its own maximum size. Keep
@@ -253,7 +269,9 @@ images and stylesheets the chapters use. Measured on the preview:
 | Synthetic, 1,000 chapters, large images                      | 76.0 MB  | 26.2 MB (1,007 objects) | 1.35× | 7.2 MB                   |
 
 Plan for **about 2.1× the size of the books you expect** in object storage, plus up to 10% of that in
-Postgres for chapter text. The worst case is an EPUB whose images are all used by its chapters. When a
+Postgres for chapter text. The full-text index adds about 25–40% of the chapter text (1.8 MB for the
+1,000-chapter book's 7.2 MB, 0.25 MB for _Pride and Prejudice_'s 0.7 MB), plus the GIN index (2 MB for
+all the books on the preview). The worst case is an EPUB whose images are all used by its chapters. When a
 book is reprocessed, the old output is deleted after the new output is in place, so for a short time
 up to one extra processed copy exists. Deleted books are purged from storage in the background.
 
@@ -270,7 +288,8 @@ up to one extra processed copy exists. Deleted books are purged from storage in 
 4. After upgrading the processor, re-process books made by an older version:
    `python manage.py library_reprocess --outdated` (also `--failed`, `--book <id>…` and `--dry-run`).
    Version 2 keeps SVG cover images that use only `xlink:href`, such as Project Gutenberg cover pages.
-5. Watch usage with `python manage.py library_storage_report`. It reads the database and is fast; `--storage` measures the bucket itself by listing every object.
+5. Upgrading from a version without search: migration `0131` indexes the books already processed (seconds on the preview). `python manage.py library_reindex --missing` indexes any it missed.
+6. Watch usage with `python manage.py library_storage_report`. It reads the database and is fast; `--storage` measures the bucket itself by listing every object.
 
 _The ValentraHQ VM had 28 GB (19%) disk free when this was written, shared with Docker images and the
 live Plane install. Free space before inviting real libraries._
@@ -289,6 +308,8 @@ book and user) and `reader_preferences` (one row per user).
 
 - **`book_collections`:** owner, workspace, name, description, visibility, sort order.
 - **`book_collection_items`:** collection, book, sort order; unique per collection and book.
+
+Migration `0131_library_search` adds `books.search_content` (default on), `books.search_config` and `books.text_indexed_at`, and `book_chapters.search_vector` with a GIN index (`book_chapter_search_idx`), and indexes the text of books already processed. No data is removed.
 
 Migration `0130_library_links` adds `book_links`: workspace, book, `target_type` (`page`, `project`, `issue`) with exactly one of `page`, `project`, `issue` set (a check constraint), `origin` (`linked` or `created`), and for created pages the `chapter` and `start_offset` of the first passage. Unique per book and target. No existing table changes.
 
@@ -313,11 +334,16 @@ Validation: offsets must be in order and span at most 20,000 characters; highlig
   - annotations: kinds and validation, private by default, sharing only on workspace books, shared annotations hidden when a book becomes personal, admin moderation, the cross-book list, Markdown export, guests
   - wiki pages from books: private by default with a link back, escaping, quotes checked against the book, excerpt limits, confirmation for sharing, the wiki's space and restriction rules
   - links: visible only with both ends, project membership for projects and work items, guests, duplicates, who may remove
+  - search: ranking of details above text, passages with chapter and occurrence, partial words, phrases and exclusions, stemming by language, privacy (personal books, admins, made personal, opted out, instance switch, archived, deleted, guests), paging and filters, one big book not crowding out others, exact chapter counts, re-indexing on language change, `library_reindex`
+- **Processing tests** also check that a processed book is indexed.
 
 ## Limitations
 
 - PDFs are not readable in the browser yet; they can be downloaded.
 - *Wiki page* always creates a new page; adding passages to an existing page is done by copying them in the editor.
+- Search finds PDFs by their details only: their text is not extracted yet.
+- Books are searched on the library's search page, not in Plane's command palette (*Search commands…*).
+- Inside the text, search matches whole words (with stemming); partial words match only in book details.
 - Linked books are shown on the book page and on work items. Wiki and project pages show their source in the page text, not in a separate panel.
 - SVG images, embedded fonts and audio/video inside EPUBs are not served: SVG is dropped, and the reader uses its own fonts.
 - Processing time is bounded by a 15-minute soft limit per attempt.
