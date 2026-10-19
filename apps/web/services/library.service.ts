@@ -28,6 +28,8 @@ import type {
   TBookTag,
   TBookUpdatePayload,
   TBookUploadReservation,
+  TLibrarySearchParams,
+  TLibrarySearchResponse,
   TWikiPageFromBook,
   TWikiPageFromBookResponse,
   EBookVisibility,
@@ -256,6 +258,18 @@ export class LibraryService extends APIService {
     link.click();
     link.remove();
     URL.revokeObjectURL(href);
+  }
+
+  // --- search across the library ---
+
+  async searchLibrary(slug: string, query: TLibrarySearchParams): Promise<TLibrarySearchResponse> {
+    const params: Record<string, string | number> = { q: query.q, limit: query.limit ?? 20, offset: query.offset ?? 0 };
+    if (query.content === false) params.content = "false";
+    if (query.file_format) params.file_format = query.file_format;
+    if (query.visibility !== null && query.visibility !== undefined) params.visibility = query.visibility;
+    return this.get(`${this.base(slug)}/search/`, { params })
+      .then((response) => response?.data)
+      .catch(rethrow);
   }
 
   // --- wiki pages and links ---

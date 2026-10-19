@@ -53,6 +53,7 @@ export const BookEditModal = observer(function BookEditModal({ workspaceSlug, bo
     description: "",
     tags: "",
   });
+  const [searchContent, setSearchContent] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -68,6 +69,7 @@ export const BookEditModal = observer(function BookEditModal({ workspaceSlug, bo
       description: book.description,
       tags: book.tags.join(", "),
     });
+    setSearchContent(book.search_content !== false);
     setErrors({});
   }, [book, isOpen]);
 
@@ -90,6 +92,7 @@ export const BookEditModal = observer(function BookEditModal({ workspaceSlug, bo
       published_date: form.published_date,
       description: form.description,
       tags: splitList(form.tags, /,/),
+      search_content: searchContent,
     };
     try {
       await updateBook(workspaceSlug, book.id, payload);
@@ -189,6 +192,22 @@ export const BookEditModal = observer(function BookEditModal({ workspaceSlug, bo
                     {...field("description")}
                   />
                 </div>
+                {book.format === "epub" && (
+                  <label className="flex items-start gap-2 text-13 text-primary sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={searchContent}
+                      onChange={(e) => setSearchContent(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span className="flex flex-col">
+                      Include the text of this book in library search
+                      <span className="text-12 text-tertiary">
+                        When off, the book is still found by its title, authors and other details.
+                      </span>
+                    </span>
+                  </label>
+                )}
               </div>
             </DialogBody>
           </DialogMain>

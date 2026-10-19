@@ -64,6 +64,8 @@ export type TBook = {
   character_count: number;
   page_count: number | null;
   archived_at: string | null;
+  /** whether the book's text can be found by library search */
+  search_content: boolean;
   permissions: TBookPermissions;
   /** short-lived signed links */
   cover_url: string | null;
@@ -78,7 +80,16 @@ export type TBook = {
 export type TBookUpdatePayload = Partial<
   Pick<
     TBook,
-    "title" | "authors" | "publisher" | "language" | "isbn" | "published_date" | "description" | "tags" | "visibility"
+    | "title"
+    | "authors"
+    | "publisher"
+    | "language"
+    | "isbn"
+    | "published_date"
+    | "description"
+    | "tags"
+    | "visibility"
+    | "search_content"
   >
 > & { archived?: boolean };
 
@@ -284,4 +295,44 @@ export type TWikiPageFromBook = {
 export type TWikiPageFromBookResponse = {
   page: { id: string; name: string; space: string; access: number };
   link: TBookLink;
+};
+
+// --- search across the library ---
+
+export type TLibrarySearchPassage = {
+  chapter: number;
+  chapter_title: string;
+  /** the matched text, and which occurrence of it in the chapter (for the reader) */
+  match: string;
+  occurrence: number;
+  before: string;
+  after: string;
+};
+
+export type TLibrarySearchResult = {
+  book: TBook;
+  matched_details: boolean;
+  matched_text: boolean;
+  /** chapters whose text matches (among the best-ranked candidates) */
+  chapter_matches: number;
+  passages: TLibrarySearchPassage[];
+};
+
+export type TLibrarySearchResponse = {
+  query: string;
+  count: number;
+  limit: number;
+  offset: number;
+  results: TLibrarySearchResult[];
+  /** false when full-text search is off for the instance or was not asked for */
+  content_searched: boolean;
+};
+
+export type TLibrarySearchParams = {
+  q: string;
+  content?: boolean;
+  file_format?: TBookFormat | null;
+  visibility?: EBookVisibility | null;
+  offset?: number;
+  limit?: number;
 };

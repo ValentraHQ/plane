@@ -126,6 +126,9 @@ export const coreRoutes: RouteConfigEntry[] = [
         layout("./(all)/[workspaceSlug]/(projects)/library/(notes)/layout.tsx", [
           route(":workspaceSlug/library/notes", "./(all)/[workspaceSlug]/(projects)/library/(notes)/notes/page.tsx"),
         ]),
+        layout("./(all)/[workspaceSlug]/(projects)/library/(search)/layout.tsx", [
+          route(":workspaceSlug/library/search", "./(all)/[workspaceSlug]/(projects)/library/(search)/search/page.tsx"),
+        ]),
         layout("./(all)/[workspaceSlug]/(projects)/library/(reader)/layout.tsx", [
           route(
             ":workspaceSlug/library/books/:bookId/read",
