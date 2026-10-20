@@ -14,28 +14,37 @@ import {
   ChevronLeftOutline,
   ChevronRightOutline,
   CloseOutline,
+  BookmarkFilled,
+  BookmarkOutline,
+  ChatOutline,
   ListLayoutOutline,
   SearchOutline,
   SettingsOutline,
 } from "@makeplane/propel/icons";
 import { setToast } from "@plane/blocks/toast";
 import type {
+  TBookAnnotation,
+  TBookAnnotationColor,
   TBookChapterContent,
   TBookChapterSummary,
+  TBookPassage,
   TBookPosition,
   TBookReadingStatePayload,
   TReaderPreferences,
 } from "@plane/types";
-import { EBookReadingStatus, EBookStatus } from "@plane/types";
+import { EBookAnnotationVisibility, EBookReadingStatus, EBookStatus, EBookVisibility } from "@plane/types";
 import { cn } from "@plane/utils";
 // hooks
 import { useAppTheme } from "@/hooks/store/use-app-theme";
 import { useLibrary } from "@/hooks/store/use-library";
+import { useUser } from "@/hooks/store/user";
 import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { bookTitle } from "../utils";
-import type { TReaderFrameHandle } from "./reader-frame";
+import { WikiPageFromBookModal } from "../wiki-page-modal";
+import { AnnotationPopover, NotesPanel, SelectionToolbar } from "./annotations";
+import type { TReaderFrameHandle, TReaderSelection } from "./reader-frame";
 import { ReaderFrame, THEMES } from "./reader-frame";
 import { SearchPanel, SettingsPanel, TocPanel } from "./reader-panels";
 
@@ -66,9 +75,20 @@ const isDarkApp = () => (document.documentElement.getAttribute("data-theme") ?? 
 
 type Props = { workspaceSlug: string; bookId: string };
 
+const passageOf = (a: TBookAnnotation): TBookPassage => ({
+  chapter: a.chapter,
+  start_offset: a.start_offset,
+  quote: a.quote,
+  note: a.note,
+});
+
 export const BookReader = observer(function BookReader({ workspaceSlug, bookId }: Props) {
   const { getBookById, fetchBook } = useLibrary();
   const { toggleSidebar } = useAppTheme();
+  const { data: currentUser } = useUser();
+  const currentUserId = currentUser?.id;
+  const frameBox = useRef<HTMLDivElement>(null);
+  const isReady = useRef(false);
   const book = getBookById(bookId);
   const frame = useRef<TReaderFrameHandle>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -81,7 +101,12 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
   const [chapters, setChapters] = useState<TBookChapterSummary[]>([]);
   const [preferences, setPreferences] = useState<TReaderPreferences>(DEFAULT_PREFERENCES);
   const [chapter, setChapter] = useState<TBookChapterContent | null>(null);
-  const [panel, setPanel] = useState<"toc" | "settings" | "search" | null>(null);
+  const [panel, setPanel] = useState<"toc" | "settings" | "search" | "notes" | null>(null);
+  const [annotations, setAnnotations] = useState<TBookAnnotation[]>([]);
+  const [orphanIds, setOrphanIds] = useState<Set<string>>(new Set());
+  const [selection, setSelection] = useState<TReaderSelection | null>(null);
+  const [opened, setOpened] = useState<{ annotation: TBookAnnotation; isNew?: boolean } | null>(null);
+  const [wikiPassages, setWikiPassages] = useState<TBookPassage[] | null>(null);
   const [progress, setProgress] = useState(0);
   const [pageInfo, setPageInfo] = useState({ page: 1, pages: 1 });
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -147,11 +172,12 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
     let cancelled = false;
     const load = async () => {
       try {
-        const [detail, list, prefs, state] = await Promise.all([
+        const [detail, list, prefs, state, notes] = await Promise.all([
           fetchBook(workspaceSlug, bookId),
           service.listChapters(workspaceSlug, bookId),
           service.getReaderPreferences(workspaceSlug).catch(() => DEFAULT_PREFERENCES),
           service.getReadingState(workspaceSlug, bookId),
+          service.listBookAnnotations(workspaceSlug, bookId).catch(() => [] as TBookAnnotation[]),
         ]);
         if (cancelled) return;
         if (detail.status !== EBookStatus.READY || detail.format !== "epub" || list.length === 0) {
@@ -168,8 +194,20 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
         const start = list.find((c) => c.linear)?.index ?? list[0].index;
         const valid = typeof saved?.chapter === "number" && list.some((c) => c.index === saved.chapter);
         finished.current = state.status === EBookReadingStatus.COMPLETED;
-        target.current = valid ? { kind: "offset", offset: saved.offset ?? 0 } : { kind: "start" };
-        setChapter(await fetchChapter(valid ? saved.chapter : start));
+        setAnnotations(notes);
+        // a link to a passage (notes page, wiki page, library search) wins over the saved position
+        const query = new URLSearchParams(window.location.search);
+        const linked = Number(query.get("chapter"));
+        if (query.has("chapter") && list.some((c) => c.index === linked)) {
+          const find = query.get("find");
+          target.current = find
+            ? { kind: "occurrence", text: find, occurrence: Number(query.get("occurrence")) || 0 }
+            : { kind: "offset", offset: Number(query.get("offset")) || 0 };
+          setChapter(await fetchChapter(linked));
+        } else {
+          target.current = valid ? { kind: "offset", offset: saved.offset ?? 0 } : { kind: "start" };
+          setChapter(await fetchChapter(valid ? saved.chapter : start));
+        }
         void service.saveReadingState(workspaceSlug, bookId, { opened: true }).catch(() => undefined);
       } catch (error) {
         if (!cancelled) setLoadError(libraryErrorMessage(error, "This book could not be opened."));
@@ -247,13 +285,171 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
     } else handle.goToOffset(0);
   }
 
+  // draw this chapter's highlights and notes; note which ones could not be found in the text
+  const drawAnnotations = useCallback(() => {
+    if (!chapter || !frame.current) return;
+    const mine = annotations.filter((a) => a.chapter === chapter.index);
+    const missing = frame.current.showAnnotations(mine, currentUserId);
+    setOrphanIds((current) => {
+      const updated = new Set([...current].filter((id) => !mine.some((a) => a.id === id)));
+      missing.forEach((id) => updated.add(id));
+      return updated;
+    });
+  }, [annotations, chapter, currentUserId]);
+
+  useEffect(() => {
+    if (isReady.current) drawAnnotations();
+  }, [drawAnnotations]);
+
+  // a new chapter document is being loaded: wait for it before drawing
+  useEffect(() => {
+    isReady.current = false;
+    setSelection(null);
+    setOpened(null);
+  }, [chapter]);
+
+  // --- annotations ---
+  const canShare = book?.visibility === EBookVisibility.WORKSPACE;
+
+  /** frame coordinates -> window coordinates */
+  const toWindow = (box: TReaderSelection["rect"] | null) => {
+    const outer = frameBox.current?.getBoundingClientRect();
+    if (!box || !outer) return null;
+    return {
+      top: box.top + outer.top,
+      bottom: box.bottom + outer.top,
+      left: box.left + outer.left,
+      right: box.right + outer.left,
+    };
+  };
+
+  const annotationError = (error: unknown) =>
+    setToast({
+      type: "error",
+      title: "Error!",
+      message: libraryErrorMessage(error, "The annotation could not be saved."),
+    });
+
+  const createAnnotation = async (
+    kind: TBookAnnotation["kind"],
+    extra: { color?: TBookAnnotationColor; note?: string } = {}
+  ) => {
+    if (!chapter || !selection) return;
+    try {
+      const created = await service.createAnnotation(workspaceSlug, bookId, {
+        kind,
+        chapter: chapter.index,
+        start_offset: selection.start,
+        end_offset: selection.end,
+        quote: selection.quote,
+        prefix: selection.prefix,
+        suffix: selection.suffix,
+        ...extra,
+      });
+      setAnnotations((current) => [...current, created]);
+      frame.current?.clearSelection();
+      setSelection(null);
+      setOpened(null);
+    } catch (error) {
+      annotationError(error);
+    }
+  };
+
+  const updateAnnotation = async (
+    annotation: TBookAnnotation,
+    change: Parameters<typeof service.updateAnnotation>[2]
+  ) => {
+    try {
+      const saved = await service.updateAnnotation(workspaceSlug, annotation.id, change);
+      setAnnotations((current) => current.map((a) => (a.id === saved.id ? saved : a)));
+      setOpened((current) => (current && current.annotation.id === saved.id ? { annotation: saved } : current));
+    } catch (error) {
+      annotationError(error);
+    }
+  };
+
+  const deleteAnnotation = async (annotation: TBookAnnotation) => {
+    try {
+      await service.deleteAnnotation(workspaceSlug, annotation.id);
+      setAnnotations((current) => current.filter((a) => a.id !== annotation.id));
+      setOpened(null);
+    } catch (error) {
+      annotationError(error);
+    }
+  };
+
+  const draftNote = (): TBookAnnotation | null =>
+    selection && chapter
+      ? {
+          id: "new",
+          book: bookId,
+          book_title: "",
+          user: currentUserId ?? "",
+          user_detail: { id: currentUserId ?? "", display_name: "" },
+          kind: "note",
+          color: "",
+          chapter: chapter.index,
+          chapter_title: "",
+          start_offset: selection.start,
+          end_offset: selection.end,
+          quote: selection.quote,
+          prefix: selection.prefix,
+          suffix: selection.suffix,
+          note: "",
+          visibility: EBookAnnotationVisibility.PRIVATE,
+          permissions: { can_edit: true, can_delete: true },
+          created_at: "",
+          updated_at: "",
+        }
+      : null;
+
+  // bookmarks on the page being read
+  const pageBookmarks = chapter
+    ? annotations.filter(
+        (a) =>
+          a.kind === "bookmark" &&
+          a.chapter === chapter.index &&
+          a.user === currentUserId &&
+          frame.current?.pageOfOffset(a.start_offset) === pageInfo.page
+      )
+    : [];
+
+  const toggleBookmark = async () => {
+    if (!chapter || !frame.current) return;
+    if (pageBookmarks.length) {
+      await Promise.all(pageBookmarks.map((a) => deleteAnnotation(a)));
+      return;
+    }
+    const where = frame.current.position();
+    if (!where) return;
+    try {
+      const created = await service.createAnnotation(workspaceSlug, bookId, {
+        kind: "bookmark",
+        chapter: chapter.index,
+        start_offset: where.offset,
+        end_offset: where.offset,
+        quote: where.quote,
+      });
+      setAnnotations((current) => [...current, created]);
+    } catch (error) {
+      annotationError(error);
+    }
+  };
+
+  const openAnnotation = (annotation: TBookAnnotation) => {
+    if (window.innerWidth < 768) setPanel(null);
+    void openChapter(annotation.chapter, { kind: "offset", offset: annotation.start_offset });
+  };
+
   const handleReady = useCallback(() => {
+    isReady.current = true;
+    drawAnnotations();
     applyTarget(target.current);
     updatePosition();
     // fetch the next chapter ahead of time
     if (chapter?.next !== null && chapter?.next !== undefined) void fetchChapter(chapter.next).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapter, fetchChapter, updatePosition]);
+  }, [chapter, fetchChapter, updatePosition, drawAnnotations]);
 
   const next = useCallback(() => {
     if (!chapter || !frame.current) return;
@@ -338,6 +534,7 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
       ? THEMES[systemDark ? "dark" : "light"]
       : (THEMES[preferences.theme] ?? THEMES.light);
 
+  const titleOf = (index: number) => chapters.find((c) => c.index === index)?.title || `Section ${index + 1}`;
   const chapterTitle =
     chapter?.title ||
     chapters.find((c) => c.index === chapter?.index)?.title ||
@@ -359,6 +556,22 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
           <p className="truncate text-13 font-medium text-primary">{book ? bookTitle(book) : ""}</p>
           <p className="truncate text-11 text-tertiary">{chapterTitle}</p>
         </div>
+        <IconButton
+          variant="ghost"
+          size="sm"
+          aria-label={pageBookmarks.length ? "Remove bookmark" : "Bookmark this page"}
+          aria-pressed={pageBookmarks.length > 0}
+          icon={<Icon icon={pageBookmarks.length ? BookmarkFilled : BookmarkOutline} />}
+          onClick={() => void toggleBookmark()}
+        />
+        <IconButton
+          variant="ghost"
+          size="sm"
+          aria-label="Notes and highlights"
+          aria-pressed={panel === "notes"}
+          icon={<Icon icon={ChatOutline} />}
+          onClick={() => setPanel(panel === "notes" ? null : "notes")}
+        />
         <IconButton
           variant="ghost"
           size="sm"
@@ -406,7 +619,7 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
         >
           <ChevronLeftOutline className="size-5" />
         </button>
-        <div className="relative min-w-0 flex-1">
+        <div ref={frameBox} className="relative min-w-0 flex-1">
           {chapter && (
             <ReaderFrame
               ref={frame}
@@ -420,6 +633,14 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
               }
               onKey={handleKey}
               onTurn={(direction) => (direction === "next" ? next() : previous())}
+              onSelection={(selected) => {
+                setSelection(selected);
+                if (selected) setOpened(null);
+              }}
+              onAnnotationClick={(id) => {
+                const annotation = annotations.find((a) => a.id === id);
+                if (annotation) setOpened({ annotation });
+              }}
             />
           )}
           {isLoading && (
@@ -440,12 +661,26 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
         {/* side panel: contents, search, settings */}
         {panel && (
           <aside
-            aria-label={panel === "toc" ? "Contents" : panel === "search" ? "Search in book" : "Reading settings"}
+            aria-label={
+              panel === "toc"
+                ? "Contents"
+                : panel === "search"
+                  ? "Search in book"
+                  : panel === "notes"
+                    ? "Notes and highlights"
+                    : "Reading settings"
+            }
             className="shadow-lg absolute inset-y-0 right-0 z-10 flex w-full max-w-sm flex-col gap-3 overflow-hidden border-l border-subtle bg-surface-1 p-3"
           >
             <div className="flex items-center justify-between">
               <h2 className="text-14 font-semibold text-primary">
-                {panel === "toc" ? "Contents" : panel === "search" ? "Search" : "Reading settings"}
+                {panel === "toc"
+                  ? "Contents"
+                  : panel === "search"
+                    ? "Search"
+                    : panel === "notes"
+                      ? "Notes and highlights"
+                      : "Reading settings"}
               </h2>
               <IconButton
                 variant="ghost"
@@ -477,10 +712,83 @@ export const BookReader = observer(function BookReader({ workspaceSlug, bookId }
                 />
               )}
               {panel === "settings" && <SettingsPanel preferences={preferences} onChange={changePreferences} />}
+              {panel === "notes" && (
+                <NotesPanel
+                  annotations={annotations}
+                  currentUserId={currentUserId}
+                  orphanIds={orphanIds}
+                  chapterTitle={titleOf}
+                  onOpen={openAnnotation}
+                  onWikiPage={(items) => setWikiPassages(items.map(passageOf))}
+                  onExport={() =>
+                    void service.exportAnnotations(workspaceSlug, bookId).catch((error) => annotationError(error))
+                  }
+                />
+              )}
             </div>
           </aside>
         )}
       </div>
+
+      {selection && !opened && (
+        <SelectionToolbar
+          box={toWindow(selection.rect) ?? selection.rect}
+          onHighlight={(color) => void createAnnotation("highlight", { color })}
+          onNote={() => {
+            const draft = draftNote();
+            if (draft) setOpened({ annotation: draft, isNew: true });
+          }}
+          onCopy={() => {
+            void navigator.clipboard?.writeText(selection.quote).catch(() => undefined);
+            frame.current?.clearSelection();
+            setSelection(null);
+          }}
+          onWikiPage={
+            chapter
+              ? () => {
+                  setWikiPassages([
+                    { chapter: chapter.index, start_offset: selection.start, quote: selection.quote, note: "" },
+                  ]);
+                  frame.current?.clearSelection();
+                  setSelection(null);
+                }
+              : undefined
+          }
+        />
+      )}
+      {opened && (
+        <AnnotationPopover
+          annotation={opened.annotation}
+          isNew={opened.isNew}
+          canShare={!!canShare}
+          box={
+            opened.isNew
+              ? toWindow(selection?.rect ?? null)
+              : toWindow(frame.current?.annotationRect(opened.annotation.id) ?? null)
+          }
+          onSave={(change) =>
+            opened.isNew
+              ? void createAnnotation("note", { note: change.note ?? "" })
+              : void updateAnnotation(opened.annotation, change)
+          }
+          onDelete={() => (opened.isNew ? setOpened(null) : void deleteAnnotation(opened.annotation))}
+          onClose={() => setOpened(null)}
+          onWikiPage={() => {
+            setWikiPassages([passageOf(opened.annotation)]);
+            setOpened(null);
+          }}
+        />
+      )}
+      {book && wikiPassages && (
+        <WikiPageFromBookModal
+          workspaceSlug={workspaceSlug}
+          book={book}
+          passages={wikiPassages}
+          chapterTitle={titleOf}
+          isOpen
+          onClose={() => setWikiPassages(null)}
+        />
+      )}
 
       {/* progress */}
       <footer className="flex items-center gap-3 border-t border-subtle px-3 py-1.5 text-11 text-tertiary">

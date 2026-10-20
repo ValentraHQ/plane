@@ -82,6 +82,59 @@ def get_viewable_space(slug, user, space_id):
     return viewable_spaces(slug, user).filter(pk=space_uuid).first()
 
 
+def create_wiki_page(slug, user, data):
+    """
+    Create a wiki page as `user` from request-like `data` (space, parent, name, access,
+    description_*). Returns (page, None) or (None, error response). Shared by the wiki and
+    by features that create pages for the user, such as the library.
+    """
+    visible = viewable_wiki_pages(slug, user)
+    parent_id = data.get("parent")
+    space = None
+    if parent_id:
+        # a sub-page always lives in its parent's space
+        parent = visible.filter(pk=_parse_uuid(parent_id)).select_related("space").first()
+        if parent is None:
+            return None, _bad_request("Parent page not found in this space")
+        if not page_permissions(parent, user)["can_edit"]:
+            return None, _forbidden("You don't have permission to add pages under this page")
+        space = parent.space
+        requested_space = data.get("space")
+        if requested_space and str(requested_space) != str(space.id):
+            return None, _bad_request("A sub-page must be in the same space as its parent")
+    else:
+        space = get_viewable_space(slug, user, data.get("space"))
+        if space is None:
+            return None, _bad_request("A valid space is required")
+    role = space_role(space, user)
+    if role is None or role < SPACE_EDITOR:
+        return None, _forbidden("You need editor access to this space to create pages")
+    parent_error = validate_page_parent(parent_id, slug, None, wiki_pages=visible.filter(space=space))
+    if parent_error:
+        return None, _bad_request(parent_error)
+
+    serializer = WorkspacePageSerializer(
+        data=data,
+        context={
+            "workspace_id": Workspace.objects.get(slug=slug).id,
+            "space_id": space.id,
+            "owned_by_id": user.id,
+            "description_json": data.get("description_json", {}),
+            "description_binary": data.get("description_binary", None),
+            "description_html": data.get("description_html", "<p></p>"),
+        },
+    )
+    if not serializer.is_valid():
+        return None, Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    page = serializer.save()
+    page_transaction.delay(
+        new_description_html=data.get("description_html", "<p></p>"),
+        old_description_html=None,
+        page_id=page.id,
+    )
+    return page, None
+
+
 class WorkspacePageViewSet(BaseViewSet):
     serializer_class = PageSerializer
     model = Page
@@ -156,50 +209,9 @@ class WorkspacePageViewSet(BaseViewSet):
 
     @allow_permission(WIKI_ROLES, level="WORKSPACE")
     def create(self, request, slug):
-        visible = viewable_wiki_pages(slug, request.user)
-        parent_id = request.data.get("parent")
-        space = None
-        if parent_id:
-            # a sub-page always lives in its parent's space
-            parent = visible.filter(pk=_parse_uuid(parent_id)).select_related("space").first()
-            if parent is None:
-                return _bad_request("Parent page not found in this space")
-            if not page_permissions(parent, request.user)["can_edit"]:
-                return _forbidden("You don't have permission to add pages under this page")
-            space = parent.space
-            requested_space = request.data.get("space")
-            if requested_space and str(requested_space) != str(space.id):
-                return _bad_request("A sub-page must be in the same space as its parent")
-        else:
-            space = get_viewable_space(slug, request.user, request.data.get("space"))
-            if space is None:
-                return _bad_request("A valid space is required")
-        role = space_role(space, request.user)
-        if role is None or role < SPACE_EDITOR:
-            return _forbidden("You need editor access to this space to create pages")
-        parent_error = validate_page_parent(parent_id, slug, None, wiki_pages=visible.filter(space=space))
-        if parent_error:
-            return _bad_request(parent_error)
-
-        serializer = WorkspacePageSerializer(
-            data=request.data,
-            context={
-                "workspace_id": Workspace.objects.get(slug=slug).id,
-                "space_id": space.id,
-                "owned_by_id": request.user.id,
-                "description_json": request.data.get("description_json", {}),
-                "description_binary": request.data.get("description_binary", None),
-                "description_html": request.data.get("description_html", "<p></p>"),
-            },
-        )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        page = serializer.save()
-        page_transaction.delay(
-            new_description_html=request.data.get("description_html", "<p></p>"),
-            old_description_html=None,
-            page_id=page.id,
-        )
+        page, error = create_wiki_page(slug, request.user, request.data)
+        if error:
+            return error
         return Response(PageDetailSerializer(self._get_page(page.id)).data, status=status.HTTP_201_CREATED)
 
     @allow_permission(WIKI_ROLES, level="WORKSPACE")

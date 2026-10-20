@@ -6,6 +6,8 @@
 
 import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 // plane imports
 import { SearchOutline } from "@makeplane/propel/icons";
 import type { TBookFilters, TBookFormat, TBookOrderBy } from "@plane/types";
@@ -24,6 +26,7 @@ const selectClass =
 
 /** Search, format / tag filters and sort for the book grid. */
 export const LibraryToolbar = observer(function LibraryToolbar() {
+  const { workspaceSlug } = useParams();
   const { filters, setFilters, tags, count, isLoading } = useLibrary();
   const [search, setSearch] = useState(filters.search);
 
@@ -101,6 +104,14 @@ export const LibraryToolbar = observer(function LibraryToolbar() {
         <span className="ml-auto text-12 text-tertiary" aria-live="polite">
           {count} {count === 1 ? "book" : "books"}
         </span>
+      )}
+      {filters.search.length >= 2 && (
+        <Link
+          href={`/${workspaceSlug}/library/search?q=${encodeURIComponent(filters.search)}`}
+          className="basis-full text-12 text-accent-primary hover:underline"
+        >
+          Search inside the books for “{filters.search}” →
+        </Link>
       )}
     </div>
   );

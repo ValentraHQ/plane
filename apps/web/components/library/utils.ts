@@ -20,6 +20,8 @@ export const formatBytes = (bytes: number) => {
 export const bookTitle = (book: Pick<TBook, "title" | "original_filename">) =>
   book.title || book.original_filename || "Untitled book";
 
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 export const bookAuthors = (book: Pick<TBook, "authors">) =>
   book.authors.length ? book.authors.join(", ") : "Unknown author";
 

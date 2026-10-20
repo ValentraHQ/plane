@@ -52,9 +52,11 @@ from .page import Page, PageLabel, PageLog, PageRestriction, ProjectPage, PageVe
 from .wiki import WikiSpace, WikiSpaceMember
 from .library import (
     Book,
+    BookAnnotation,
     BookChapter,
     BookCollection,
     BookCollectionItem,
+    BookLink,
     BookReadingState,
     BookResource,
     ReaderPreferences,

@@ -21,6 +21,8 @@ def storage(monkeypatch):
     store = {}
     fake = FakeStorage(store)
     monkeypatch.setattr(book_task, "S3Storage", lambda *args, **kwargs: fake)
+    # the full-text index is queued after processing; build it right away
+    monkeypatch.setattr(book_task.index_book, "delay", lambda book_id: book_task.index_book(book_id))
     return fake
 
 
@@ -64,6 +66,9 @@ class TestProcessBook:
         assert book.status == Book.STATUS_READY and book.failure_reason == ""
         assert book.title == "The Test Book" and book.authors == ["Ada Author"] and book.isbn == "9780306406157"
         assert book.chapter_count == 2 and book.processor_version == book_task.PROCESSOR_VERSION
+        # the text is indexed for search once the book is ready
+        assert book.text_indexed_at is not None and book.search_config in ("english", "simple")
+        assert not BookChapter.objects.filter(book=book, search_vector__isnull=True).exists()
         assert [c.title for c in BookChapter.objects.filter(book=book).order_by("index")] == [
             "Chapter One",
             "Chapter Two",

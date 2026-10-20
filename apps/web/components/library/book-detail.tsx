@@ -18,12 +18,14 @@ import { renderFormattedDate } from "@plane/utils";
 // hooks
 import { useLibrary } from "@/hooks/store/use-library";
 import { useAppRouter } from "@/hooks/use-app-router";
+import { LibraryService } from "@/services/library.service";
 import { libraryErrorMessage } from "@/store/library.store";
 // local imports
 import { BookActionsMenu } from "./book-actions-menu";
+import { BookLinks } from "./book-links";
 import { BookCover } from "./book-cover";
 import { BookEditModal } from "./book-edit-modal";
-import { STATUS_LABELS, bookAuthors, bookTitle, formatBytes } from "./utils";
+import { STATUS_LABELS, bookAuthors, bookTitle, formatBytes, plural } from "./utils";
 
 function TocList({ entries, depth = 0 }: { entries: TBookTocEntry[]; depth?: number }) {
   return (
@@ -50,11 +52,18 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 
 type Props = { workspaceSlug: string; bookId: string };
 
+const notesService = new LibraryService();
+
 export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }: Props) {
   const router = useAppRouter();
   const { getBookById, fetchBook, downloadBook, reprocessBook, setFilters } = useLibrary();
   const book = getBookById(bookId);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const { data: notes } = useSWR(
+    book?.format === "epub" ? `LIBRARY_BOOK_NOTES_${bookId}` : null,
+    () => notesService.listMyAnnotations(workspaceSlug, { book: bookId, limit: 1 }),
+    { revalidateOnFocus: false }
+  );
   const processing = book?.status === EBookStatus.PROCESSING || book?.status === EBookStatus.UPLOADING;
   const { error, isLoading } = useSWR(
     `LIBRARY_BOOK_${bookId}`,
@@ -229,9 +238,37 @@ export const BookDetail = observer(function BookDetail({ workspaceSlug, bookId }
               </Fact>
             ))}
           </dl>
+          {notes && notes.count > 0 && (
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-12 text-secondary">
+              <span>
+                Your notes:{" "}
+                {[
+                  notes.counts.highlight && plural(notes.counts.highlight, "highlight"),
+                  notes.counts.note && plural(notes.counts.note, "note"),
+                  notes.counts.bookmark && plural(notes.counts.bookmark, "bookmark"),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+              <Link
+                href={`/${workspaceSlug}/library/notes?book=${book.id}`}
+                className="text-accent-primary hover:underline"
+              >
+                See all
+              </Link>
+              <button
+                type="button"
+                className="text-accent-primary hover:underline"
+                onClick={() => void notesService.exportAnnotations(workspaceSlug, book.id).catch(() => undefined)}
+              >
+                Export Markdown
+              </button>
+            </p>
+          )}
           {book.subjects.length > 0 && <p className="text-12 text-tertiary">Subjects: {book.subjects.join(" · ")}</p>}
         </div>
       </div>
+      <BookLinks workspaceSlug={workspaceSlug} book={book} />
       {book.toc && book.toc.length > 0 && (
         <section aria-labelledby="book-toc" className="flex flex-col gap-3">
           <h2 id="book-toc" className="text-14 font-semibold text-primary">

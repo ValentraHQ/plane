@@ -243,6 +243,9 @@ def process_book(self, book_id, token):
             current.processed_at = timezone.now()
             current.processor_version = PROCESSOR_VERSION
             current.save(disable_auto_set_user=True)
+            if current.format == Book.FORMAT_EPUB:
+                # the full-text index is built separately: a slow index never fails the book
+                transaction.on_commit(lambda: index_book.delay(str(book_id)))
             if old_prefix and old_prefix != uploader.prefix:
                 transaction.on_commit(lambda: delete_prefix(storage, old_prefix))
         return "ready"
@@ -260,6 +263,14 @@ def process_book(self, book_id, token):
     except Exception as error:
         log_exception(error)
         return _fail(book_id, token, "The book could not be processed because of an unexpected error.", uploader)
+
+
+@shared_task(soft_time_limit=900)
+def index_book(book_id):
+    """Build the full-text index of a processed book (see plane.utils.book_search)."""
+    from plane.utils.book_search import index_book_text
+
+    return index_book_text(book_id)
 
 
 # a reservation that was never completed (browser closed, upload failed) is removed after this long

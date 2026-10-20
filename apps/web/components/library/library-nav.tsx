@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { observer } from "mobx-react";
+import Link from "next/link";
 // plane imports
 import { Icon } from "@makeplane/propel/components/icon";
 import { IconButton } from "@makeplane/propel/components/icon-button";
@@ -14,12 +15,14 @@ import {
   AddOutline,
   ArchiveOutline,
   BookClosedOutline,
+  ChatOutline,
+  DeleteOutline,
   EditOutline,
   GlobeOutline,
   LibraryOutline,
   LockOutline,
   MoreHorizontalOutline,
-  DeleteOutline,
+  SearchOutline,
 } from "@makeplane/propel/icons";
 import { ConfirmDialog } from "@plane/blocks/dialog";
 import { setToast } from "@plane/blocks/toast";
@@ -89,6 +92,14 @@ export const LibraryNav = observer(function LibraryNav({ workspaceSlug }: Props)
           </li>
         ))}
       </ul>
+      <Link href={`/${workspaceSlug}/library/notes`} className={item(false)}>
+        <ChatOutline className="size-4 shrink-0" />
+        Notes & highlights
+      </Link>
+      <Link href={`/${workspaceSlug}/library/search`} className={item(false)}>
+        <SearchOutline className="size-4 shrink-0" />
+        Search inside books
+      </Link>
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between px-2">
           <span className="text-11 font-semibold tracking-wide text-tertiary uppercase">Collections</span>

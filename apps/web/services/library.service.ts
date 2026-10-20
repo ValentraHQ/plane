@@ -9,7 +9,14 @@ import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import type {
   TBook,
+  TBookAnnotation,
+  TBookAnnotationCreate,
+  TBookAnnotationListResponse,
+  TBookAnnotationUpdate,
   TBookChapterContent,
+  TBookLink,
+  TBookLinkTarget,
+  TBookLinkTargetType,
   TBookChapterSummary,
   TBookReadingState,
   TBookReadingStatePayload,
@@ -21,6 +28,10 @@ import type {
   TBookTag,
   TBookUpdatePayload,
   TBookUploadReservation,
+  TLibrarySearchParams,
+  TLibrarySearchResponse,
+  TWikiPageFromBook,
+  TWikiPageFromBookResponse,
   EBookVisibility,
 } from "@plane/types";
 import { API_BASE_URL } from "@plane/constants";
@@ -69,7 +80,7 @@ export class LibraryService extends APIService {
     const params: Record<string, string | number> = { offset, limit, order_by: filters.order_by };
     if (filters.search) params.search = filters.search;
     if (filters.visibility !== null) params.visibility = filters.visibility;
-    if (filters.format) params.format = filters.format;
+    if (filters.format) params.file_format = filters.format;
     if (filters.tag) params.tag = filters.tag;
     if (filters.collection) params.collection = filters.collection;
     if (filters.archived) params.archived = "true";
@@ -193,6 +204,112 @@ export class LibraryService extends APIService {
 
   async searchBook(slug: string, bookId: string, query: string): Promise<TBookSearchResponse> {
     return this.get(`${this.base(slug)}/books/${bookId}/search/`, { params: { q: query } })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async listBookAnnotations(slug: string, bookId: string): Promise<TBookAnnotation[]> {
+    return this.get(`${this.base(slug)}/books/${bookId}/annotations/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async createAnnotation(slug: string, bookId: string, data: TBookAnnotationCreate): Promise<TBookAnnotation> {
+    return this.post(`${this.base(slug)}/books/${bookId}/annotations/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async updateAnnotation(slug: string, annotationId: string, data: TBookAnnotationUpdate): Promise<TBookAnnotation> {
+    return this.patch(`${this.base(slug)}/annotations/${annotationId}/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async deleteAnnotation(slug: string, annotationId: string): Promise<void> {
+    return this.delete(`${this.base(slug)}/annotations/${annotationId}/`)
+      .then(() => undefined)
+      .catch(rethrow);
+  }
+
+  async listMyAnnotations(
+    slug: string,
+    params: { book?: string; kind?: string; search?: string; limit?: number; offset?: number } = {}
+  ): Promise<TBookAnnotationListResponse> {
+    return this.get(`${this.base(slug)}/annotations/`, { params })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  /** Download the user's own annotations as Markdown (one book, or all books). */
+  async exportAnnotations(slug: string, bookId?: string) {
+    const response = await this.get(`${this.base(slug)}/annotations/export/`, {
+      params: bookId ? { book: bookId } : {},
+      responseType: "blob",
+    }).catch(rethrow);
+    const disposition: string = response?.headers?.["content-disposition"] ?? "";
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/);
+    const name = match ? decodeURIComponent(match[1] ?? match[2]) : "notes-and-highlights.md";
+    const href = URL.createObjectURL(response.data as Blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+  }
+
+  // --- search across the library ---
+
+  async searchLibrary(slug: string, query: TLibrarySearchParams): Promise<TLibrarySearchResponse> {
+    const params: Record<string, string | number> = { q: query.q, limit: query.limit ?? 20, offset: query.offset ?? 0 };
+    if (query.content === false) params.content = "false";
+    if (query.file_format) params.file_format = query.file_format;
+    if (query.visibility !== null && query.visibility !== undefined) params.visibility = query.visibility;
+    return this.get(`${this.base(slug)}/search/`, { params })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  // --- wiki pages and links ---
+
+  async createWikiPage(slug: string, bookId: string, data: TWikiPageFromBook): Promise<TWikiPageFromBookResponse> {
+    return this.post(`${this.base(slug)}/books/${bookId}/wiki-pages/`, data)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async listBookLinks(slug: string, bookId: string): Promise<TBookLink[]> {
+    return this.get(`${this.base(slug)}/books/${bookId}/links/`)
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async createBookLink(
+    slug: string,
+    bookId: string,
+    targetType: TBookLinkTargetType,
+    targetId: string
+  ): Promise<TBookLink> {
+    return this.post(`${this.base(slug)}/books/${bookId}/links/`, { target_type: targetType, target_id: targetId })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async deleteBookLink(slug: string, linkId: string): Promise<void> {
+    await this.delete(`${this.base(slug)}/links/${linkId}/`).catch(rethrow);
+  }
+
+  /** Books linked to a page, project or work item (that the user can see). */
+  async listLinkedBooks(slug: string, targetType: TBookLinkTargetType, targetId: string): Promise<TBookLink[]> {
+    return this.get(`${this.base(slug)}/links/`, { params: { target_type: targetType, target_id: targetId } })
+      .then((response) => response?.data)
+      .catch(rethrow);
+  }
+
+  async searchLinkTargets(slug: string, targetType: TBookLinkTargetType, search: string): Promise<TBookLinkTarget[]> {
+    return this.get(`${this.base(slug)}/link-targets/`, { params: { target_type: targetType, search } })
       .then((response) => response?.data)
       .catch(rethrow);
   }

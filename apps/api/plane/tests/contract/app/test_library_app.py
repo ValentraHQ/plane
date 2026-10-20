@@ -57,9 +57,10 @@ def library(settings, monkeypatch):
     fake = FakeStorage(store)
     monkeypatch.setattr(views, "S3Storage", lambda *args, **kwargs: fake)
     monkeypatch.setattr(book_task, "S3Storage", lambda *args, **kwargs: fake)
-    calls = {"process": [], "purge": []}
+    calls = {"process": [], "purge": [], "index": []}
     monkeypatch.setattr(views.process_book, "delay", lambda *args: calls["process"].append(args))
     monkeypatch.setattr(views.purge_book_files, "delay", lambda *args: calls["purge"].append(args))
+    monkeypatch.setattr(views.index_book, "delay", lambda *args: calls["index"].append(args))
     return {"storage": fake, "calls": calls}
 
 
@@ -516,6 +517,8 @@ def test_instance_config_exposes_the_library_flag(settings, api_client):
     )
     config = api_client.get("/api/instances/").json()["config"]
     assert config["is_library_enabled"] is True and config["book_file_size_limit"] == settings.BOOK_FILE_SIZE_LIMIT
+    assert config["book_excerpt_limit"] == settings.BOOK_EXCERPT_LIMIT
+    assert config["book_excerpt_page_limit"] == settings.BOOK_EXCERPT_PAGE_LIMIT
 
 
 def chapter(workspace, owner_book, index, text, title=""):
@@ -634,3 +637,607 @@ class TestLibraryReading:
         assert client.get(search_url, {"q": "a"}).json()["results"] == []
         assert client.get(search_url, {"q": "dragons"}).json()["results"] == []
         assert people["other"][1].get(search_url, {"q": "alice"}).status_code == 404
+
+
+def ann_url(slug, book_id=None, annotation_id=None, suffix=""):
+    if annotation_id:
+        return f"/api/workspaces/{slug}/library/annotations/{annotation_id}/{suffix}"
+    if book_id:
+        return f"/api/workspaces/{slug}/library/books/{book_id}/annotations/"
+    return f"/api/workspaces/{slug}/library/annotations/{suffix}"
+
+
+def readable(workspace, owner, **extra):
+    item = book(workspace, owner, status=Book.STATUS_READY, chapter_count=3, **extra)
+    for index in range(3):
+        chapter(workspace, item, index, f"Text of chapter {index}.", title=f"Chapter {index + 1}")
+    return item
+
+
+HIGHLIGHT = {
+    "chapter": 1,
+    "start_offset": 5,
+    "end_offset": 30,
+    "quote": "the passage",
+    "prefix": "before ",
+    "suffix": " after",
+}
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryAnnotations:
+    def test_create_kinds_and_validation(self, library, people, workspace):
+        user, client = people["member"]
+        item = readable(workspace, user)
+        created = client.post(ann_url(workspace.slug, item.id), {**HIGHLIGHT, "color": "green"}, format="json")
+        assert created.status_code == 201, created.json()
+        data = created.json()
+        assert (data["kind"], data["color"], data["chapter_title"], data["visibility"]) == (
+            "highlight",
+            "green",
+            "Chapter 2",
+            0,
+        )
+        assert data["permissions"] == {"can_edit": True, "can_delete": True}
+        note = client.post(
+            ann_url(workspace.slug, item.id), {**HIGHLIGHT, "kind": "note", "note": "Remember this"}, format="json"
+        )
+        assert note.status_code == 201 and note.json()["color"] == ""
+        mark = client.post(
+            ann_url(workspace.slug, item.id),
+            {"kind": "bookmark", "chapter": 2, "start_offset": 7, "end_offset": 7},
+            format="json",
+        )
+        assert mark.status_code == 201
+        bad = [
+            ({**HIGHLIGHT, "end_offset": 1}, "end_offset"),
+            ({**HIGHLIGHT, "end_offset": 30000}, "end_offset"),
+            ({**HIGHLIGHT, "end_offset": 5}, "end_offset"),
+            ({**HIGHLIGHT, "kind": "note", "note": "  "}, "note"),
+            ({**HIGHLIGHT, "color": "neon"}, "color"),
+            ({**HIGHLIGHT, "quote": "x" * 5000}, "quote"),
+        ]
+        for payload, field in bad:
+            response = client.post(ann_url(workspace.slug, item.id), payload, format="json")
+            assert response.status_code == 400 and field in response.json(), (payload, response.json())
+        assert (
+            client.post(ann_url(workspace.slug, item.id), {**HIGHLIGHT, "chapter": 3}, format="json").status_code == 400
+        )
+        unready = book(workspace, user, status=Book.STATUS_PROCESSING, chapter_count=3)
+        assert client.post(ann_url(workspace.slug, unready.id), HIGHLIGHT, format="json").status_code == 409
+
+    def test_private_by_default_and_explicit_sharing(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        shared_book = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        private = client.post(ann_url(workspace.slug, shared_book.id), HIGHLIGHT, format="json").json()
+        assert other_client.get(ann_url(workspace.slug, shared_book.id)).json() == []
+        assert (
+            other_client.patch(
+                ann_url(workspace.slug, annotation_id=private["id"]), {"color": "pink"}, format="json"
+            ).status_code
+            == 404
+        )
+        shared = client.patch(ann_url(workspace.slug, annotation_id=private["id"]), {"visibility": 1}, format="json")
+        assert shared.status_code == 200
+        seen = other_client.get(ann_url(workspace.slug, shared_book.id)).json()
+        assert [a["id"] for a in seen] == [private["id"]] and seen[0]["permissions"] == {
+            "can_edit": False,
+            "can_delete": False,
+        }
+        assert seen[0]["user_detail"]["display_name"] == user.display_name
+        assert (
+            other_client.patch(
+                ann_url(workspace.slug, annotation_id=private["id"]), {"note": "x"}, format="json"
+            ).status_code
+            == 403
+        )
+        assert other_client.delete(ann_url(workspace.slug, annotation_id=private["id"])).status_code == 403
+        # others' shared annotations are not "mine"
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 0
+        assert other_client.get(ann_url(workspace.slug, shared_book.id), {"mine": "true"}).json() == []
+
+    def test_sharing_needs_a_workspace_book(self, library, people, workspace):
+        user, client = people["member"]
+        personal = readable(workspace, user)
+        assert (
+            client.post(ann_url(workspace.slug, personal.id), {**HIGHLIGHT, "visibility": 1}, format="json").status_code
+            == 400
+        )
+        created = client.post(ann_url(workspace.slug, personal.id), HIGHLIGHT, format="json").json()
+        assert (
+            client.patch(
+                ann_url(workspace.slug, annotation_id=created["id"]), {"visibility": 1}, format="json"
+            ).status_code
+            == 400
+        )
+
+    def test_shared_annotations_disappear_when_the_book_becomes_personal(self, library, people, workspace):
+        owner, owner_client = people["member"]
+        other_user, other_client = people["other"]
+        item = readable(workspace, owner, visibility=Book.VISIBILITY_WORKSPACE)
+        theirs = other_client.post(
+            ann_url(workspace.slug, item.id), {**HIGHLIGHT, "visibility": 1}, format="json"
+        ).json()
+        assert [a["id"] for a in owner_client.get(ann_url(workspace.slug, item.id)).json()] == [theirs["id"]]
+        owner_client.patch(url(workspace.slug, item.id), {"visibility": 0}, format="json")
+        # the owner no longer sees someone else's annotations on a book that is now private to them ...
+        assert owner_client.get(ann_url(workspace.slug, item.id)).json() == []
+        # ... and the other member can no longer reach the book or the annotation
+        assert other_client.get(ann_url(workspace.slug, item.id)).status_code == 404
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 0
+        # sharing the book again brings the annotation back, still shared
+        owner_client.patch(url(workspace.slug, item.id), {"visibility": 1}, format="json")
+        assert [a["id"] for a in owner_client.get(ann_url(workspace.slug, item.id)).json()] == [theirs["id"]]
+        assert other_client.get(ann_url(workspace.slug)).json()["count"] == 1
+
+    def test_admins_can_remove_shared_annotations_only(self, library, people, workspace):
+        user, client = people["member"]
+        admin_client = people["admin2"][1]
+        item = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        shared = client.post(ann_url(workspace.slug, item.id), {**HIGHLIGHT, "visibility": 1}, format="json").json()
+        private = client.post(ann_url(workspace.slug, item.id), HIGHLIGHT, format="json").json()
+        assert admin_client.get(ann_url(workspace.slug, item.id)).json()[0]["permissions"] == {
+            "can_edit": False,
+            "can_delete": True,
+        }
+        assert (
+            admin_client.patch(
+                ann_url(workspace.slug, annotation_id=shared["id"]), {"note": "x"}, format="json"
+            ).status_code
+            == 403
+        )
+        assert admin_client.delete(ann_url(workspace.slug, annotation_id=private["id"])).status_code == 404
+        assert admin_client.delete(ann_url(workspace.slug, annotation_id=shared["id"])).status_code == 204
+        assert client.delete(ann_url(workspace.slug, annotation_id=private["id"])).status_code == 204
+
+    def test_my_annotations_across_books(self, library, people, workspace):
+        user, client = people["member"]
+        first, second = readable(workspace, user, title="Alpha"), readable(workspace, user, title="Beta")
+        client.post(ann_url(workspace.slug, first.id), {**HIGHLIGHT, "quote": "orbital mechanics"}, format="json")
+        client.post(
+            ann_url(workspace.slug, second.id),
+            {**HIGHLIGHT, "kind": "note", "note": "check the delta-v"},
+            format="json",
+        )
+        client.post(
+            ann_url(workspace.slug, second.id),
+            {"kind": "bookmark", "chapter": 0, "start_offset": 0, "end_offset": 0},
+            format="json",
+        )
+        mine = client.get(ann_url(workspace.slug)).json()
+        assert mine["count"] == 3 and mine["counts"] == {"highlight": 1, "note": 1, "bookmark": 1}
+        assert {a["book_title"] for a in mine["results"]} == {"Alpha", "Beta"}
+        assert client.get(ann_url(workspace.slug), {"search": "delta"}).json()["count"] == 1
+        assert client.get(ann_url(workspace.slug), {"book": str(first.id)}).json()["count"] == 1
+        assert client.get(ann_url(workspace.slug), {"kind": "bookmark"}).json()["count"] == 1
+
+    def test_markdown_export(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        item = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, title="Orbits", authors=["Ada Author"])
+        client.post(
+            ann_url(workspace.slug, item.id),
+            {**HIGHLIGHT, "quote": "Line one\nLine two", "note": "My thought"},
+            format="json",
+        )
+        other_client.post(
+            ann_url(workspace.slug, item.id), {**HIGHLIGHT, "quote": "someone else", "visibility": 1}, format="json"
+        )
+        response = client.get(ann_url(workspace.slug, suffix="export/"), {"book": str(item.id)})
+        assert response.status_code == 200 and response["Content-Type"].startswith("text/markdown")
+        assert "Orbits - notes.md" in response["Content-Disposition"]
+        text = response.content.decode()
+        assert text.startswith("# Orbits\n") and "*Ada Author*" in text and "## Chapter 2" in text
+        assert "> Line one\n> Line two" in text and "My thought" in text
+        assert "someone else" not in text  # only the user's own annotations
+
+    def test_guests_have_no_annotations(self, library, people, workspace):
+        guest_client = people["guest"][1]
+        assert guest_client.get(ann_url(workspace.slug)).status_code == 403
+        assert guest_client.get(ann_url(workspace.slug, suffix="export/")).status_code == 403
+
+
+# --- wiki pages from books, and links to pages, projects and work items (PR 5) ---
+
+
+def lib_url(slug, suffix):
+    return f"/api/workspaces/{slug}/library/{suffix}"
+
+
+PASSAGE_TEXT = "It was the best of times,\nit was the worst of times. <script>x</script>"
+
+
+@pytest.fixture
+def wiki_setup(db, workspace, settings):
+    from plane.db.models import Page, WikiSpace
+
+    settings.WEB_URL = settings.APP_BASE_URL = "https://plane.example"
+    space = WikiSpace.objects.create(workspace=workspace, name="Reading", identifier="READ")
+    closed = WikiSpace.objects.create(
+        workspace=workspace, name="Closed", identifier="CLOSED", access=WikiSpace.ACCESS_RESTRICTED
+    )
+    return {"space": space, "closed": closed, "Page": Page}
+
+
+def quotable(workspace, owner, **extra):
+    item = readable(workspace, owner, **extra)
+    BookChapter.objects.filter(book=item, index=1).update(text=PASSAGE_TEXT, character_count=len(PASSAGE_TEXT))
+    return item
+
+
+def wiki_body(space, **extra):
+    return {
+        "space": str(space.id),
+        "passages": [
+            {"chapter": 1, "start_offset": 0, "quote": "It was the best of times, it was", "note": "<b>Dickens</b>"}
+        ],
+        **extra,
+    }
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibraryWiki:
+    def test_a_page_from_a_passage_is_private_and_points_back(self, library, people, workspace, wiki_setup):
+        from plane.utils.wiki_permissions import viewable_wiki_pages
+
+        user, client = people["member"]
+        other = people["other"][0]
+        item = quotable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, title="Two Cities", authors=["Dickens"])
+        response = client.post(
+            url(workspace.slug, item.id, "wiki-pages/"), wiki_body(wiki_setup["space"]), format="json"
+        )
+        assert response.status_code == 201, response.json()
+        data = response.json()
+        page = wiki_setup["Page"].objects.get(pk=data["page"]["id"])
+        assert page.name == "Notes on Two Cities" and page.owned_by_id == user.id
+        assert page.space_id == wiki_setup["space"].id and page.access == wiki_setup["Page"].PRIVATE_ACCESS
+        html = page.description_html
+        assert "<blockquote><p>It was the best of times, it was</p></blockquote>" in html
+        assert "&lt;b&gt;Dickens&lt;/b&gt;" in html and "<b>" not in html  # notes are escaped
+        assert f"https://plane.example/{workspace.slug}/library/books/{item.id}/read?chapter=1&amp;offset=0" in html
+        assert "<h3>Chapter 2</h3>" in html and "<strong>Source:</strong>" in html and "by Dickens" in html
+        assert data["link"]["origin"] == "created" and data["link"]["target"]["space_id"] == str(wiki_setup["space"].id)
+        # private: nobody else sees the page, nor the link on the (workspace) book
+        assert not viewable_wiki_pages(workspace.slug, other).filter(pk=page.id).exists()
+        assert people["other"][1].get(url(workspace.slug, item.id, "links/")).json() == []
+        assert [link["target"]["id"] for link in client.get(url(workspace.slug, item.id, "links/")).json()] == [
+            str(page.id)
+        ]
+
+    def test_quotes_must_come_from_the_book_within_the_limits(self, library, people, workspace, wiki_setup, settings):
+        user, client = people["member"]
+        item = quotable(workspace, user)
+        post = lambda body: client.post(url(workspace.slug, item.id, "wiki-pages/"), body, format="json")  # noqa: E731
+        space = wiki_setup["space"]
+        invented = wiki_body(space, passages=[{"chapter": 1, "quote": "It was a dark and stormy night"}])
+        assert post(invented).json()["code"] == "quote_not_found"
+        # line breaks and spacing do not matter
+        spaced = wiki_body(space, passages=[{"chapter": 1, "quote": "best of   times, it\nwas the worst"}])
+        assert post(spaced).status_code == 201
+        assert post(wiki_body(space, passages=[{"chapter": 7, "quote": "x"}])).json()["code"] == "unknown_chapter"
+        assert post(wiki_body(space, passages=[{"chapter": 1}])).status_code == 400  # neither quote nor note
+        settings.BOOK_EXCERPT_LIMIT = 10
+        too_long = post(wiki_body(space))
+        assert too_long.status_code == 400 and too_long.json()["code"] == "excerpt_too_long"
+        settings.BOOK_EXCERPT_LIMIT, settings.BOOK_EXCERPT_PAGE_LIMIT = 100, 40
+        many = [{"chapter": 1, "quote": "it was the worst of times"}] * 2
+        assert post(wiki_body(space, passages=many)).json()["code"] == "excerpts_too_long"
+        assert wiki_setup["Page"].objects.filter(space=space).count() == 1
+
+    def test_sharing_needs_confirmation(self, library, people, workspace, wiki_setup):
+        from plane.utils.wiki_permissions import viewable_wiki_pages
+
+        user, client = people["member"]
+        other, other_client = people["other"]
+        item = quotable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+        endpoint = url(workspace.slug, item.id, "wiki-pages/")
+        refused = client.post(endpoint, wiki_body(wiki_setup["space"], share=True), format="json")
+        assert refused.status_code == 400 and refused.json()["code"] == "confirmation_required"
+        assert not wiki_setup["Page"].objects.filter(space=wiki_setup["space"]).exists()
+        shared = client.post(
+            endpoint, wiki_body(wiki_setup["space"], share=True, confirm_excerpts=True, title="Club"), format="json"
+        )
+        assert shared.status_code == 201 and shared.json()["page"]["access"] == wiki_setup["Page"].PUBLIC_ACCESS
+        page_id = shared.json()["page"]["id"]
+        assert viewable_wiki_pages(workspace.slug, other).filter(pk=page_id).exists()
+        assert [link["target"]["name"] for link in other_client.get(url(workspace.slug, item.id, "links/")).json()] == [
+            "Club"
+        ]
+
+    def test_the_wiki_rules_apply(self, library, people, workspace, wiki_setup):
+        from plane.db.models import PageRestriction, WikiSpaceMember
+
+        user, client = people["member"]
+        owner_of_parent = people["admin2"][0]
+        item = quotable(workspace, user)
+        endpoint = url(workspace.slug, item.id, "wiki-pages/")
+        # a restricted space the user is not in
+        assert client.post(endpoint, wiki_body(wiki_setup["closed"]), format="json").status_code == 400
+        # a viewer of the space cannot create pages
+        WikiSpaceMember.objects.create(
+            workspace=workspace, space=wiki_setup["space"], member=user, role=WikiSpaceMember.ROLE_VIEWER
+        )
+        assert client.post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 403
+        WikiSpaceMember.objects.filter(member=user).update(role=WikiSpaceMember.ROLE_EDITOR)
+        # nor under an edit-restricted parent
+        parent = wiki_setup["Page"].objects.create(
+            workspace=workspace, space=wiki_setup["space"], is_global=True, name="Locked", owned_by=owner_of_parent
+        )
+        PageRestriction.objects.create(
+            workspace=workspace, page=parent, kind=PageRestriction.EDIT, member=owner_of_parent
+        )
+        body = wiki_body(wiki_setup["space"], parent=str(parent.id))
+        assert client.post(endpoint, body, format="json").status_code == 403
+        # someone else's personal book, a book that is not ready, guests
+        assert people["other"][1].post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 404
+        Book.objects.filter(pk=item.id).update(status=Book.STATUS_PROCESSING)
+        assert client.post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 409
+        assert people["guest"][1].post(endpoint, wiki_body(wiki_setup["space"]), format="json").status_code == 403
+
+    def test_links_need_both_ends_visible(self, library, people, workspace, wiki_setup):
+        from plane.db.models import Issue, Project, ProjectMember, State
+
+        user, client = people["member"]
+        other, other_client = people["other"]
+        admin, admin_client = people["admin2"]
+        project = Project.objects.create(name="Moon", identifier="MOON", workspace=workspace, created_by=user)
+        State.objects.create(name="Todo", group="unstarted", default=True, project=project, workspace=workspace)
+        ProjectMember.objects.create(project=project, member=user, role=15, is_active=True)
+        ProjectMember.objects.create(project=project, member=admin, role=15, is_active=True)
+        issue = Issue.objects.create(name="Landing", project=project, workspace=workspace, created_by=user)
+        page = wiki_setup["Page"].objects.create(
+            workspace=workspace, space=wiki_setup["space"], is_global=True, name="Handbook", owned_by=user
+        )
+        shared = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE, title="Shared")
+        personal = readable(workspace, user, title="Mine")
+        links = url(workspace.slug, shared.id, "links/")
+
+        found = client.get(
+            lib_url(workspace.slug, "link-targets/"), {"target_type": "issue", "search": "moon-1"}
+        ).json()
+        assert [t["id"] for t in found] == [str(issue.id)] and found[0]["project_identifier"] == "MOON"
+        assert other_client.get(lib_url(workspace.slug, "link-targets/"), {"target_type": "issue"}).json() == []
+        assert [
+            t["name"] for t in client.get(lib_url(workspace.slug, "link-targets/"), {"target_type": "project"}).json()
+        ] == ["Moon"]
+
+        for target_type, target in (("issue", issue), ("project", project), ("page", page)):
+            created = client.post(links, {"target_type": target_type, "target_id": str(target.id)}, format="json")
+            assert created.status_code == 201, created.json()
+        again = client.post(links, {"target_type": "issue", "target_id": str(issue.id)}, format="json")
+        assert again.status_code == 200  # no duplicates
+        client.post(
+            url(workspace.slug, personal.id, "links/"),
+            {"target_type": "issue", "target_id": str(issue.id)},
+            format="json",
+        )
+
+        assert {link["target_type"] for link in client.get(links).json()} == {"issue", "project", "page"}
+        # the other member is not in the project: only the page link shows
+        assert [link["target_type"] for link in other_client.get(links).json()] == ["page"]
+        # someone outside the project cannot link to it, or see what is linked to its work item
+        refused = other_client.post(links, {"target_type": "issue", "target_id": str(issue.id)}, format="json")
+        assert refused.status_code == 404
+        issue_books = {"target_type": "issue", "target_id": str(issue.id)}
+        assert other_client.get(lib_url(workspace.slug, "links/"), issue_books).json() == []
+        # a project member sees the workspace book on the work item, never the personal one
+        seen = admin_client.get(lib_url(workspace.slug, "links/"), issue_books).json()
+        assert [link["book_detail"]["title"] for link in seen] == ["Shared"]
+        assert sorted(
+            link["book_detail"]["title"] for link in client.get(lib_url(workspace.slug, "links/"), issue_books).json()
+        ) == ["Mine", "Shared"]
+
+        # project guests cannot link work items
+        ProjectMember.objects.filter(member=admin).update(role=5)
+        project.guest_view_all_features = True
+        project.save()
+        guest_try = admin_client.post(
+            url(workspace.slug, shared.id, "links/"),
+            {"target_type": "issue", "target_id": str(issue.id)},
+            format="json",
+        )
+        assert guest_try.status_code == 403
+
+    def test_who_may_remove_a_link(self, library, people, workspace, wiki_setup):
+        user, client = people["member"]
+        other, other_client = people["other"]
+        admin_client = people["admin2"][1]
+        item = readable(workspace, user, visibility=Book.VISIBILITY_WORKSPACE)
+
+        def page(name):
+            return wiki_setup["Page"].objects.create(
+                workspace=workspace, space=wiki_setup["space"], is_global=True, name=name, owned_by=user
+            )
+
+        endpoint = url(workspace.slug, item.id, "links/")
+        by_other = other_client.post(
+            endpoint, {"target_type": "page", "target_id": str(page("A").id)}, format="json"
+        ).json()
+        by_owner = client.post(endpoint, {"target_type": "page", "target_id": str(page("B").id)}, format="json").json()
+        assert by_other["permissions"]["can_delete"] is True  # they added it
+        assert other_client.delete(lib_url(workspace.slug, f"links/{by_owner['id']}/")).status_code == 403
+        assert (
+            admin_client.delete(lib_url(workspace.slug, f"links/{by_owner['id']}/")).status_code == 204
+        )  # editor of the book
+        assert other_client.delete(lib_url(workspace.slug, f"links/{by_other['id']}/")).status_code == 204
+        assert client.get(endpoint).json() == []
+
+
+# --- search across the library (PR 6) ---
+
+
+def indexed(workspace, owner, texts, **extra):
+    """A ready EPUB with one chapter per text, indexed for search."""
+    from plane.utils.book_search import index_book_text
+
+    item = book(workspace, owner, status=Book.STATUS_READY, chapter_count=len(texts), **extra)
+    for index, text in enumerate(texts):
+        chapter(workspace, item, index, text, title=f"Part {index + 1}")
+    index_book_text(item.id)
+    return item
+
+
+def search(client, slug, **params):
+    response = client.get(f"/api/workspaces/{slug}/library/search/", params)
+    assert response.status_code == 200, response.content
+    return response.json()
+
+
+def titles_of(data):
+    return [r["book"]["title"] for r in data["results"]]
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+class TestLibrarySearch:
+    def test_details_and_text_are_searched_and_ranked(self, library, people, workspace):
+        user, client = people["member"]
+        indexed(workspace, user, ["Nothing here."], title="Orbital Mechanics", authors=["Kepler"])
+        indexed(
+            workspace,
+            user,
+            ["A quiet start.", "Moons settle into an orbital resonance over time. Later, orbital decay."],
+            title="Moons",
+            language="en",
+        )
+        indexed(workspace, user, ["Gardens and roses."], title="Gardening")
+        data = search(client, workspace.slug, q="orbital")
+        assert titles_of(data) == ["Orbital Mechanics", "Moons"]  # a book about it beats a mention
+        about, mention = data["results"]
+        assert about["matched_details"] and not about["matched_text"]
+        assert mention["matched_text"] and mention["chapter_matches"] == 1
+        [found] = mention["passages"]
+        assert found["chapter"] == 1 and found["chapter_title"] == "Part 2"
+        assert found["match"] == "orbital" and found["occurrence"] == 0
+        assert found["before"].endswith("settle into an ") and found["after"].startswith(" resonance")
+        # authors and partial words while typing
+        assert titles_of(search(client, workspace.slug, q="kepl")) == ["Orbital Mechanics"]
+        # web-style queries: phrases and exclusions
+        assert titles_of(search(client, workspace.slug, q='"orbital decay"')) == ["Moons"]
+        assert titles_of(search(client, workspace.slug, q="orbital -resonance")) == ["Orbital Mechanics"]
+        # details only
+        assert titles_of(search(client, workspace.slug, q="orbital", content="false")) == ["Orbital Mechanics"]
+
+    def test_stemming_follows_the_book_language(self, library, people, workspace):
+        user, client = people["member"]
+        english = indexed(workspace, user, ["The rockets were launched at dawn."], title="Rockets", language="en-GB")
+        indexed(workspace, user, ["The rockets were launched at dawn."], title="Untagged")
+        english.refresh_from_db()
+        assert english.search_config == "english"
+        data = search(client, workspace.slug, q="launching")
+        assert titles_of(data) == ["Rockets"]  # "simple" has no stemming
+        assert data["results"][0]["passages"][0]["match"] == "launched"
+
+    def test_search_never_reveals_what_the_user_cannot_see(self, library, people, workspace, settings):
+        user, client = people["member"]
+        other, other_client = people["other"]
+        admin_client = people["admin2"][1]
+        private = indexed(workspace, other, ["The zebra secret is kept here."], title="Zebra Diary")
+        shared = indexed(workspace, other, ["A zebra crossing."], title="Streets", visibility=Book.VISIBILITY_WORKSPACE)
+        for viewer in (client, admin_client):  # admins do not see personal books either
+            data = search(viewer, workspace.slug, q="zebra")
+            assert titles_of(data) == ["Streets"] and data["count"] == 1
+            assert "secret" not in json.dumps(data)
+        assert sorted(titles_of(search(other_client, workspace.slug, q="zebra"))) == ["Streets", "Zebra Diary"]
+        # made personal: gone for everyone else
+        Book.objects.filter(pk=shared.id).update(visibility=Book.VISIBILITY_PERSONAL)
+        assert search(client, workspace.slug, q="zebra")["count"] == 0
+        Book.objects.filter(pk=shared.id).update(visibility=Book.VISIBILITY_WORKSPACE)
+        # the book can keep its text out of search; its details still match
+        Book.objects.filter(pk=shared.id).update(search_content=False)
+        assert search(client, workspace.slug, q="crossing")["count"] == 0
+        assert titles_of(search(client, workspace.slug, q="streets")) == ["Streets"]
+        Book.objects.filter(pk=shared.id).update(search_content=True)
+        # full-text search off for the instance
+        settings.LIBRARY_FULLTEXT_SEARCH = False
+        off = search(client, workspace.slug, q="crossing")
+        assert off["count"] == 0 and off["content_searched"] is False
+        settings.LIBRARY_FULLTEXT_SEARCH = True
+        # archived and deleted books
+        Book.objects.filter(pk=shared.id).update(archived_at=timezone_now())
+        assert search(client, workspace.slug, q="crossing")["count"] == 0
+        assert search(client, workspace.slug, q="crossing", archived="true")["count"] == 1
+        Book.objects.filter(pk=shared.id).update(archived_at=None)
+        Book.objects.get(pk=shared.id).delete()
+        assert search(client, workspace.slug, q="crossing")["count"] == 0
+        # guests have no library
+        assert (
+            people["guest"][1].get(f"/api/workspaces/{workspace.slug}/library/search/", {"q": "zebra"}).status_code
+            == 403
+        )
+        assert private.id  # still there for its owner
+
+    def test_short_queries_paging_and_filters(self, library, people, workspace):
+        user, client = people["member"]
+        for n in range(5):
+            indexed(workspace, user, [f"Comets everywhere, volume {n}."], title=f"Comets {n}")
+        pdf = indexed(workspace, user, ["Comets."], title="Comet PDF")
+        Book.objects.filter(pk=pdf.id).update(format="pdf")
+        assert search(client, workspace.slug, q="c") == {
+            "query": "c", "count": 0, "limit": 20, "offset": 0, "results": [], "content_searched": True
+        }  # fmt: skip
+        page = search(client, workspace.slug, q="comets", limit=2, offset=2)
+        assert page["count"] == 6 and len(page["results"]) == 2
+        assert titles_of(search(client, workspace.slug, q="comets", file_format="pdf")) == ["Comet PDF"]
+        # the book list filters by format too ("format" itself belongs to REST framework)
+        listed = client.get(url(workspace.slug), {"file_format": "pdf"})
+        assert listed.status_code == 200 and [b["title"] for b in listed.json()["results"]] == ["Comet PDF"]
+
+    def test_a_big_book_does_not_crowd_out_the_others(self, library, people, workspace):
+        from plane.utils.book_search import index_book_text
+
+        user, client = people["member"]
+        big = book(workspace, user, status=Book.STATUS_READY, chapter_count=600, title="Big", language="en")
+        BookChapter.objects.bulk_create(
+            [
+                BookChapter(
+                    workspace=workspace, book=big, index=i, spine_id=f"c{i}", href=f"c{i}.xhtml",
+                    content_key=f"k{i}", text="Comets and comets and comets again.", title=f"Big {i}",
+                )
+                for i in range(600)
+            ]
+        )  # fmt: skip
+        index_book_text(big.id)
+        indexed(workspace, user, ["Once, a comet passed by."], title="Small", language="en")
+        data = search(client, workspace.slug, q="comet")
+        by_title = {r["book"]["title"]: r for r in data["results"]}
+        assert set(by_title) == {"Big", "Small"}
+        assert by_title["Big"]["chapter_matches"] == 600 and len(by_title["Big"]["passages"]) == 3
+        assert by_title["Small"]["chapter_matches"] == 1
+
+    def test_search_settings_on_the_book(self, library, people, workspace):
+        user, client = people["member"]
+        other_client = people["other"][1]
+        item = indexed(workspace, user, ["Text."], title="Settings", visibility=Book.VISIBILITY_WORKSPACE)
+        assert (
+            other_client.patch(url(workspace.slug, item.id), {"search_content": False}, format="json").status_code
+            == 403
+        )
+        response = client.patch(url(workspace.slug, item.id), {"search_content": False}, format="json")
+        assert response.status_code == 200 and response.json()["search_content"] is False
+        # a new language means a new stemming: the text is indexed again
+        client.patch(url(workspace.slug, item.id), {"language": "fr"}, format="json")
+        assert library["calls"]["index"] == [(str(item.id),)]
+        Book.objects.filter(pk=item.id).update(search_config="french")  # what the queued task does
+        client.patch(url(workspace.slug, item.id), {"language": "fr-CA"}, format="json")
+        assert len(library["calls"]["index"]) == 1  # same configuration, nothing to do
+
+    def test_reindex_command(self, library, people, workspace):
+        from django.core.management import call_command
+
+        user, client = people["member"]
+        item = indexed(workspace, user, ["Nebulae glow."], title="Nebulae")
+        BookChapter.objects.filter(book=item).update(search_vector=None)
+        Book.objects.filter(pk=item.id).update(text_indexed_at=None)
+        assert search(client, workspace.slug, q="glow")["count"] == 0
+        call_command("library_reindex", "--missing")
+        assert titles_of(search(client, workspace.slug, q="glow")) == ["Nebulae"]
+
+
+def timezone_now():
+    from django.utils import timezone
+
+    return timezone.now()

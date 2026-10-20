@@ -144,6 +144,9 @@ class InstanceEndpoint(BaseAPIView):
         # Library (eBooks)
         data["is_library_enabled"] = settings.LIBRARY_ENABLED
         data["book_file_size_limit"] = settings.BOOK_FILE_SIZE_LIMIT
+        data["book_excerpt_limit"] = settings.BOOK_EXCERPT_LIMIT
+        data["book_excerpt_page_limit"] = settings.BOOK_EXCERPT_PAGE_LIMIT
+        data["is_library_fulltext_enabled"] = settings.LIBRARY_FULLTEXT_SEARCH
 
         # is smtp configured
         data["is_smtp_configured"] = bool(EMAIL_HOST)

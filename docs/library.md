@@ -8,8 +8,8 @@ Workspace members can upload EPUB and PDF books to a personal library or to the 
 EPUBs are processed in the background into sanitized chapters for the in-browser reader. PDFs are
 stored with their metadata and can be downloaded; reading PDFs in the browser comes in a later PR.
 
-This document covers the foundation (PR 1 of the library series), the library UI (PR 2) and the
-reader (PR 3). Annotations, wiki integration and search across books follow in later PRs.
+This document covers the foundation (PR 1 of the library series), the library UI (PR 2), the
+reader (PR 3), annotations (PR 4), wiki integration (PR 5) and search across books (PR 6).
 
 ## Reading (web)
 
@@ -37,6 +37,51 @@ _Mark as unread_.
   - Progress is the share of the book's characters before the reading point.
   - Reaching the end of the last chapter marks the book finished.
   - Reading state is private: nobody else sees your position, progress or status.
+
+## Highlights, notes and bookmarks (web)
+
+- **Highlight:** select text in the reader. A toolbar offers five colours (yellow, green, blue, pink, purple), _Note_ and _Copy_. Clicking a highlight opens it: change the colour, add or edit a note, share it, or delete it.
+- **Note:** _Note_ on the toolbar saves the selection with a note (a note needs text). Notes are drawn with a dotted underline.
+- **Bookmark:** the bookmark button in the reader header marks the current page; pressed again, it removes the bookmark.
+- **Notes panel** (speech-bubble button): everything in this book, grouped by chapter, with _All / Mine / Shared_ when others have shared something. Clicking an entry opens its passage. _Export Markdown_ downloads your own annotations of this book.
+- **Notes & highlights** (`/library/notes`, linked from the library sidebar): all your annotations across the books you can still see, newest first, with search (quote and note text), a kind filter and _Export Markdown_. Each entry links to `/library/books/<id>/read?chapter=<n>&offset=<o>`, which opens the reader at that passage. The book page shows a summary (_Your notes: 3 highlights · 1 note_) with _See all_ and _Export Markdown_.
+- **Stable references.** An annotation stores its chapter, start and end character offsets into the chapter text, the quoted text and 32 characters before and after it. When a chapter is drawn, the offsets are used if the text there still matches the quote; otherwise every occurrence of the quote is scored by how well its surroundings match and how close it is to the old offset, and the best one is used. If the quote is gone (the book was replaced by a different edition), the annotation is kept and listed as _not found in the text_. Highlights are drawn with `<mark>` elements around text nodes, which never changes the text the offsets refer to.
+- **Private by default.** An annotation is visible only to its author until they tick _Share with everyone who can read this book_. Only annotations on workspace books can be shared. Shared annotations are shown with a dashed underline and the author's name, and only the author can change them. A workspace admin can delete a shared annotation (moderation) but cannot see private ones. When a book is made personal again, the other members lose access to it and to their annotations on it, and the owner no longer sees them; sharing the book again brings them back.
+- **Export** includes only your own annotations: a `# <book>` section per book, a `## <chapter>` heading per chapter, each quote as a `>` block followed by its note, and bookmarks as list items.
+
+## Wiki pages and links (web)
+
+- **A wiki page from the book.** *Wiki page* appears on the selection toolbar, on a highlight or note, and in the reader's Notes panel (all your highlights and notes of the book, which you can tick off one by one). The dialog lets you choose:
+  - the title (by default *Notes on <book>*)
+  - a space you can write in, and optionally a parent page
+  - an introduction
+  - who can see the page
+- **The page** contains the introduction, then per chapter each quote as a blockquote with your note and an *Open this passage in the book* link, then a source line (title, authors, publisher, year) linking to the book. It is created through the wiki's own create path, so space roles, parent restrictions and private pages apply as in the wiki. The book page lists it under *Linked* as *created from the book*, with a link to the passage.
+- **Private by default.** The page is private (only you) unless you choose *Everyone in <space>*.
+  - Sharing shows how many characters will be quoted and a copyright reminder, and needs the box *I may share these excerpts…* ticked.
+  - The server refuses a shared page without that confirmation.
+  - When the book is personal, the dialog says that others will see the excerpts but cannot open the book.
+- **Excerpt limits** apply to every page:
+  - each quote is at most `BOOK_EXCERPT_LIMIT` characters (1,500); the dialog shortens longer ones at a word boundary and says so
+  - a page quotes at most `BOOK_EXCERPT_PAGE_LIMIT` characters in total (10,000)
+  - the server checks every quote against the chapter text (ignoring whitespace), so a page can only quote what the book says
+- **Links.** *Link…* on the book page links the book to a work item (search by name or by ID such as `WEB-12`), a project or a page. A work item shows a **Books** section with its linked books, *Link a book* and *Unlink*.
+  - A link is shown only to people who can see both the book and the target, so it never reveals a personal book or a project someone is not in.
+  - Linking to a project or work item needs a member role in that project (not guest).
+  - The person who added a link and anyone who can edit the book can remove it.
+
+## Searching the library (web)
+
+- **Library > Search inside books** (also offered under the grid's search box once you type) searches every book you can see, both its details and its text.
+- **Ranking:** books are ranked by how well they match, and a book *about* the query (a match in its title, authors, tags, subjects, publisher, ISBN or description) ranks above one that only mentions it. A match in the title counts most.
+- **Results:** each book shows up to three passages, with the match highlighted, and how many chapters match. A passage opens the reader at that place with the match selected (`/read?chapter=<n>&find=<text>&occurrence=<k>`).
+- **Queries** work as on the web: `"white rabbit"` for a phrase, `rabbit -hole` to leave a word out, `or` between alternatives. Words are matched with the stemming of the book's language, so *hurrying* finds *hurried* in an English book. Book details are matched without stemming, and partial words match too (*kepl* finds Kepler).
+- **Filters:** format, shelf (*Only me* / *Shared with workspace*), and *Search inside books* (off: details only).
+- **Privacy.** Search starts from the books you can see (`viewable_books`), so another person's personal book never contributes a result, a passage, a count or a rank. That includes workspace admins. Archived books are searched only with `archived=true`.
+- **Opting out.** Whoever can edit a book can keep its text out of search (*Include the text of this book in library search* in *Edit details*). The book is then still found by its details. `LIBRARY_FULLTEXT_SEARCH=0` turns text search off for the whole instance.
+- **Indexing.** After a book is processed, `index_book` (a Celery task) stores a `tsvector` for each chapter, using the text search configuration of the book's language (`english`, `french`, … and `simple` when the language is unknown), with a GIN index. Indexing runs separately, so a slow index never fails a book. Changing the language indexes the text again. Each chapter is indexed up to `BOOK_INDEX_CHAPTER_LIMIT` characters (500,000; a `tsvector` holds at most 1 MB).
+- **Rebuilding:** `python manage.py library_reindex --missing` (or `--all`, `--book <id>…`, `--dry-run`).
+- **Performance on the preview:** a search that matches all 1,000 chapters of the 72 MB test book returns in about 0.7 s, including the HTTP round trip.
 
 ## Using the library (web)
 
@@ -151,7 +196,7 @@ All endpoints are under `/api/workspaces/<slug>/library/`. They return 404 when 
 
 | Method               | Path                                |                                                                                                                                                                                                                                              |
 | -------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET                  | `books/`                            | List: `search` (title, author, ISBN, publisher), `visibility`, `status`, `format`, `archived=true`, `order_by` (`created_at`, `title`, `updated_at`, `-…`), `limit` ≤ 100, `offset`. Returns `{count, limit, offset, results}`.              |
+| GET                  | `books/`                            | List: `search` (title, author, ISBN, publisher), `visibility`, `status`, `file_format` (`epub` or `pdf`), `archived=true`, `order_by` (`created_at`, `title`, `updated_at`, `-…`), `limit` ≤ 100, `offset`. Returns `{count, limit, offset, results}`.              |
 | POST                 | `books/`                            | Reserve an upload; returns `{book, upload_data}`.                                                                                                                                                                                            |
 | GET / PATCH / DELETE | `books/<id>/`                       | Detail (with `toc`); PATCH takes the metadata fields, `visibility` and `archived`.                                                                                                                                                           |
 | POST                 | `books/<id>/upload-complete/`       | Start processing after the upload.                                                                                                                                                                                                           |
@@ -168,6 +213,16 @@ All endpoints are under `/api/workspaces/<slug>/library/`. They return 404 when 
 | PATCH / DELETE       | `collections/<id>/`                 | Owner or workspace admin; only the owner changes `visibility`, and a collection holding personal books cannot be shared.                                                                                                                     |
 | POST                 | `collections/<id>/books/`           | `{book_ids: [...]}` (at most 200): adds books the user can see. Personal books cannot go into a shared collection.                                                                                                                           |
 | DELETE               | `collections/<id>/books/<book_id>/` | Removes one book.                                                                                                                                                                                                                            |
+| GET / POST           | `books/<id>/annotations/`           | GET: the annotations of this book the user can see (their own and shared ones), filtered by `chapter`, `kind` and `mine=true`. POST `{kind, chapter, start_offset, end_offset, quote, prefix, suffix, color, note, visibility}`; 409 if the book is not a ready EPUB. |
+| PATCH / DELETE       | `annotations/<id>/`                 | PATCH `{color, note, visibility}`: author only. DELETE: the author, or a workspace admin for a shared annotation. Annotations the user cannot see return 404.                                                                                |
+| GET                  | `annotations/`                      | The user's own annotations across visible books, newest first: `book`, `kind`, `search`, `limit` ≤ 200, `offset`. Returns `{count, counts: {highlight, note, bookmark}, results}`.                                                         |
+| POST                 | `books/<id>/wiki-pages/`            | `{space, parent?, title?, intro?, passages: [{chapter, start_offset, quote, note}] (1–100), share, confirm_excerpts}`: creates a wiki page (private unless `share`). 400 with `code` `excerpt_too_long`, `excerpts_too_long`, `quote_not_found`, `unknown_chapter` or `confirmation_required`; 409 if the book is not a ready EPUB. Returns `{page, link}`. |
+| GET / POST           | `books/<id>/links/`                 | The book's links the user can see (both ends visible); POST `{target_type: page\|project\|issue, target_id}` (an existing link returns 200).                                                                                                      |
+| DELETE               | `links/<id>/`                       | The person who added the link, or an editor of the book.                                                                                                                                                                                     |
+| GET                  | `links/?target_type=&target_id=`    | Books linked to a page, project or work item, with `book_detail`.                                                                                                                                                                            |
+| GET                  | `search/?q=`                        | Books ranked by details and text: `{query, count, limit, offset, content_searched, results: [{book, matched_details, matched_text, chapter_matches, passages: [{chapter, chapter_title, match, occurrence, before, after}]}]}`. Takes `content=false`, `file_format`, `visibility`, `tag`, `archived=true`, `limit` ≤ 50, `offset`; at least 2 characters. |
+| GET                  | `link-targets/?target_type=&search=` | Pages, projects (member role) or work items (member role; `KEY-12` matches the ID) the user could link to, at most 20.                                                                                                                      |
+| GET                  | `annotations/export/`               | The user's own annotations as Markdown (`text/markdown` attachment), for all books or one `?book=<id>`.                                                                                                                                     |
 
 The book list also takes `reading=unread|reading|completed` (the user's own status), `tag=<name>` and `collection=<id>`, and its search also matches tags. Book
 objects include `tags`, `owner_detail` and the user's own `my_reading` (`{progress, status, last_opened_at}`), and the detail view adds the `collection_ids` the user can
@@ -194,7 +249,10 @@ Book objects include:
 | `BOOK_MAX_CHAPTERS`           | `5000`               |                                                                                                                                                                        |
 | `BOOK_PROCESSING_MAX_RETRIES` | `3`                  | Retries for storage or network errors.                                                                                                                                 |
 | `BOOK_SIGNED_URL_EXPIRATION`  | `600`                | Seconds.                                                                                                                                                               |
-| `BOOK_EXCERPT_LIMIT`          | `1500`               | Characters, for wiki excerpts (used from PR 5).                                                                                                                        |
+| `BOOK_EXCERPT_LIMIT`          | `1500`               | Characters per quote copied into a wiki page.                                                                                                                          |
+| `BOOK_EXCERPT_PAGE_LIMIT`     | `10000`              | Characters quoted in one wiki page, all quotes together.                                                                                                               |
+| `LIBRARY_FULLTEXT_SEARCH`     | `1`                  | `0` searches book details only. Each book can also opt out.                                                                                                             |
+| `BOOK_INDEX_CHAPTER_LIMIT`    | `500000`             | Characters of one chapter that are indexed for search.                                                                                                                  |
 
 The proxy (`apps/proxy/Caddyfile.ce`) applies `BOOK_FILE_SIZE_LIMIT` to the storage route only. This is
 safe because every upload to storage needs a signed policy that fixes its own maximum size. Keep
@@ -211,7 +269,9 @@ images and stylesheets the chapters use. Measured on the preview:
 | Synthetic, 1,000 chapters, large images                      | 76.0 MB  | 26.2 MB (1,007 objects) | 1.35× | 7.2 MB                   |
 
 Plan for **about 2.1× the size of the books you expect** in object storage, plus up to 10% of that in
-Postgres for chapter text. The worst case is an EPUB whose images are all used by its chapters. When a
+Postgres for chapter text. The full-text index adds about 25–40% of the chapter text (1.8 MB for the
+1,000-chapter book's 7.2 MB, 0.25 MB for _Pride and Prejudice_'s 0.7 MB), plus the GIN index (2 MB for
+all the books on the preview). The worst case is an EPUB whose images are all used by its chapters. When a
 book is reprocessed, the old output is deleted after the new output is in place, so for a short time
 up to one extra processed copy exists. Deleted books are purged from storage in the background.
 
@@ -228,7 +288,8 @@ up to one extra processed copy exists. Deleted books are purged from storage in 
 4. After upgrading the processor, re-process books made by an older version:
    `python manage.py library_reprocess --outdated` (also `--failed`, `--book <id>…` and `--dry-run`).
    Version 2 keeps SVG cover images that use only `xlink:href`, such as Project Gutenberg cover pages.
-5. Watch usage with `python manage.py library_storage_report`. It reads the database and is fast; `--storage` measures the bucket itself by listing every object.
+5. Upgrading from a version without search: migration `0131` indexes the books already processed (seconds on the preview). `python manage.py library_reindex --missing` indexes any it missed.
+6. Watch usage with `python manage.py library_storage_report`. It reads the database and is fast; `--storage` measures the bucket itself by listing every object.
 
 _The ValentraHQ VM had 28 GB (19%) disk free when this was written, shared with Docker images and the
 live Plane install. Free space before inviting real libraries._
@@ -248,7 +309,15 @@ book and user) and `reader_preferences` (one row per user).
 - **`book_collections`:** owner, workspace, name, description, visibility, sort order.
 - **`book_collection_items`:** collection, book, sort order; unique per collection and book.
 
-Reading state and annotations are added with the PRs that use them.
+Migration `0131_library_search` adds `books.search_content` (default on), `books.search_config` and `books.text_indexed_at`, and `book_chapters.search_vector` with a GIN index (`book_chapter_search_idx`), and indexes the text of books already processed. No data is removed.
+
+Migration `0130_library_links` adds `book_links`: workspace, book, `target_type` (`page`, `project`, `issue`) with exactly one of `page`, `project`, `issue` set (a check constraint), `origin` (`linked` or `created`), and for created pages the `chapter` and `start_offset` of the first passage. Unique per book and target. No existing table changes.
+
+Migration `0129_library_annotations` adds `book_annotations`:
+
+- **`book_annotations`:** workspace, book, user (the author), kind (`highlight`, `note`, `bookmark`), colour, chapter, start and end offsets, quote, prefix and suffix (64 characters each), note, visibility (0 private, 1 shared). Indexed by book and user, by book and visibility (shared annotations), and by user and creation date (the Notes page). It is soft-deleted like other Plane models.
+
+Validation: offsets must be in order and span at most 20,000 characters; highlights and notes need a selection; notes need text; the quote is at most 4,000 characters (the browser sends the start of longer passages, and the offsets cover the rest) and notes at most 10,000.
 
 ## Tests
 
@@ -262,10 +331,20 @@ Reading state and annotations are added with the PRs that use them.
   - list/single consistency for every user and book, cross-workspace access
   - upload validation, the separate size limit, duplicates, upload completion
   - metadata edits, archive, search, delete, reprocess, downloads, chapter resource resolution
+  - annotations: kinds and validation, private by default, sharing only on workspace books, shared annotations hidden when a book becomes personal, admin moderation, the cross-book list, Markdown export, guests
+  - wiki pages from books: private by default with a link back, escaping, quotes checked against the book, excerpt limits, confirmation for sharing, the wiki's space and restriction rules
+  - links: visible only with both ends, project membership for projects and work items, guests, duplicates, who may remove
+  - search: ranking of details above text, passages with chapter and occurrence, partial words, phrases and exclusions, stemming by language, privacy (personal books, admins, made personal, opted out, instance switch, archived, deleted, guests), paging and filters, one big book not crowding out others, exact chapter counts, re-indexing on language change, `library_reindex`
+- **Processing tests** also check that a processed book is indexed.
 
 ## Limitations
 
 - PDFs are not readable in the browser yet; they can be downloaded.
+- *Wiki page* always creates a new page; adding passages to an existing page is done by copying them in the editor.
+- Search finds PDFs by their details only: their text is not extracted yet.
+- Books are searched on the library's search page, not in Plane's command palette (*Search commands…*).
+- Inside the text, search matches whole words (with stemming); partial words match only in book details.
+- Linked books are shown on the book page and on work items. Wiki and project pages show their source in the page text, not in a separate panel.
 - SVG images, embedded fonts and audio/video inside EPUBs are not served: SVG is dropped, and the reader uses its own fonts.
 - Processing time is bounded by a 15-minute soft limit per attempt.
 - Covers come from the EPUB only; PDFs have no cover.

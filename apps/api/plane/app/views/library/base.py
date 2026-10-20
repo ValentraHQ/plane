@@ -36,7 +36,7 @@ from plane.app.serializers.library import (
     BookUpdateSerializer,
     BookUploadSerializer,
 )
-from plane.bgtasks.book_task import chapter_document, process_book, purge_book_files
+from plane.bgtasks.book_task import chapter_document, index_book, process_book, purge_book_files
 from plane.db.models import (
     Book,
     BookChapter,
@@ -48,6 +48,7 @@ from plane.db.models import (
 )
 from plane.settings.storage import S3Storage
 from plane.utils.book_access import book_permissions, library_role, viewable_books, viewable_collections
+from plane.utils.book_search import search_config_for
 
 from ..base import BaseAPIView
 
@@ -121,8 +122,9 @@ class BookListEndpoint(LibraryBaseEndpoint):
             books = books.filter(visibility=int(params["visibility"]))
         if params.get("status", "").isdigit():
             books = books.filter(status=int(params["status"]))
-        if params.get("format") in ("epub", "pdf"):
-            books = books.filter(format=params["format"])
+        # not "format": REST framework reads that one as the response format (and answers 404)
+        if params.get("file_format") in ("epub", "pdf"):
+            books = books.filter(format=params["file_format"])
         books = books.filter(archived_at__isnull=params.get("archived") != "true")
         reading = {"reading": BookReadingState.STATUS_READING, "completed": BookReadingState.STATUS_COMPLETED}
         if params.get("reading") in ("reading", "completed", "unread"):
@@ -290,6 +292,11 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
         if "archived" in data:
             book.archived_at = timezone.now() if data["archived"] else None
             fields.append("archived_at")
+        if "search_content" in data:
+            book.search_content = data["search_content"]
+            fields.append("search_content")
+        # the language picks the stemming of the full-text index
+        reindex = "language" in data and book.text_indexed_at and search_config_for(book.language) != book.search_config
         try:
             with transaction.atomic():
                 book.save(update_fields=fields)
@@ -300,6 +307,8 @@ class BookDetailEndpoint(LibraryBaseEndpoint):
                     ).delete(soft=False)
         except IntegrityError:
             return Response({"error": "The same book is already in that library."}, status=status.HTTP_409_CONFLICT)
+        if reindex:
+            index_book.delay(str(book.id))
         return Response(BookDetailSerializer(book, context=self.detail_context(request, role, book)).data)
 
     def delete(self, request, slug, book_id):
